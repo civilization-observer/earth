@@ -28,6 +28,17 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     /** @type {null | { kind: 'sun' | 'moon' | 'planet', index?: number }} */
     let focusedBody = null;
     let simTime = Date.now();
+    /** Mond, Orion, Erde, Planeten: alles um 2 h gegenüber der Simulationsuhr verzögert */
+    const SCENE_TIME_OFFSET_MS = 2 * 60 * 60 * 1000;
+
+    function sceneTimeMs() {
+        return simTime - SCENE_TIME_OFFSET_MS;
+    }
+
+    /** Nur UI: MEZ- und T+-Anzeige gegenüber der Szenenzeit um +2 h */
+    const DISPLAY_TIME_OFFSET_MS = 2 * 60 * 60 * 1000;
+    const DISPLAY_MET_OFFSET_H = 2;
+
     let timeWarp = 1;
     let followOrion = false;
     let followMoon = false;
@@ -161,7 +172,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         const ambientLight = new THREE.AmbientLight(0x333344, 1.5);
         scene.add(ambientLight);
 
-        const T0 = ARTEMIS2.getJulianCenturies(simTime);
+        const T0 = ARTEMIS2.getJulianCenturies(sceneTimeMs());
         const sp0 = ARTEMIS2.getSunPosition(T0);
         sunScenePos.set(sp0.x, sp0.y, sp0.z);
         const sunDir0 = sunScenePos.clone().normalize();
@@ -204,7 +215,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             fullTrajectory = ARTEMIS2.getFullTrajectoryPoints(0.5);
             const wp = ARTEMIS2.WAYPOINTS;
             if (wp.length > 0) totalMET_hours = wp[wp.length - 1].t;
-            updateTrajectoryLines(ARTEMIS2.getMET(simTime));
+            updateTrajectoryLines(ARTEMIS2.getMET(sceneTimeMs()));
         });
 
         initLaunchFeed();
@@ -499,7 +510,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     // ── Planets (Positionen & Bahnen folgen simTime über updateSolarSystem) ──
     function createPlanets() {
         const planets = ARTEMIS2.PLANETS;
-        const T0 = ARTEMIS2.getJulianCenturies(simTime);
+        const T0 = ARTEMIS2.getJulianCenturies(sceneTimeMs());
 
         for (let i = 0; i < planets.length; i++) {
             if (i === 2) continue;
@@ -744,7 +755,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         ) * 1000;
         const velocity = ARTEMIS2.getVelocity(metHours);
 
-        const totalSeconds = Math.max(0, metHours * 3600);
+        const metDisplayH = metHours + DISPLAY_MET_OFFSET_H;
+        const totalSeconds = Math.max(0, metDisplayH * 3600);
         const days = Math.floor(totalSeconds / 86400);
         const hrs = Math.floor((totalSeconds % 86400) / 3600);
         const mins = Math.floor((totalSeconds % 3600) / 60);
@@ -770,7 +782,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             timeWarp.toLocaleString('de-DE') + '×';
 
         const rt = document.getElementById('real-time-mez');
-        if (rt) rt.textContent = MEZ_FORMAT.format(new Date(simTime));
+        if (rt) rt.textContent = MEZ_FORMAT.format(new Date(sceneTimeMs() + DISPLAY_TIME_OFFSET_MS));
     }
 
     function formatDistance(km) {
@@ -866,9 +878,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         lastFrameTime = now;
 
         simTime += dtReal * 1000 * timeWarp;
-        updateSolarSystem(simTime);
+        updateSolarSystem(sceneTimeMs());
 
-        const metHours = ARTEMIS2.getMET(simTime);
+        const metHours = ARTEMIS2.getMET(sceneTimeMs());
         const clampedMET = Math.max(0, Math.min(metHours, totalMET_hours));
 
         if (earthMesh) {
