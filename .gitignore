@@ -1,0 +1,21 @@
+# Betriebssystem
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs, temporär
+*.log
+npm-debug.log*
+
+# Falls später npm/node genutzt wird
+node_modules/
+
+# Umgebung / Geheimnisse (falls du je .env nutzt)
+.env
+.env.local
