@@ -1,193 +1,54 @@
-/*
- * Artemis 2 Mission Observer - 3D Visualization
- * Three.js application with Earth, Moon, Orion tracking + Solar System
- */
-
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 (function () {
     'use strict';
 
-    // ── State ──
-    let scene, camera, renderer, controls;
-    let earthMesh, moonMesh, orionMarker, orionGlow;
-    let sunMesh, sunGlow, sunLabel;
-    let earthLabel, moonLabel, orionLabel;
-    let pastLine, futureLine;
-    let moonOrbitLine;
-    let planetOrbits = [];   // orbit lines (excl. Earth) — only in solar system zoom
-    let earthOrbitLine;       // Earth orbit — always visible
-    let planetOrbitByIndex = {}; // index 0–7 → Line
-    let planetMeshByIndex = {};  // index 0–7 → Mesh (excl. duplicate)
-    let dynamicLabels = [];   // labels that auto-scale with camera distance
-    let pickableMeshes = [];
-    let extraPickableMeshes = [];
-    const raycaster = new THREE.Raycaster();
-    const pointerNdc = new THREE.Vector2();
-    /** @type {null | { kind: 'sun' | 'moon' | 'planet', index?: number }} */
-    let focusedBody = null;
-    let simTime = Date.now();
-    /** Mond, Orion, Erde, Planeten: alles um 2 h gegenüber der Simulationsuhr verzögert */
-    const SCENE_TIME_OFFSET_MS = 2 * 60 * 60 * 1000;
-
-    function sceneTimeMs() {
-        return simTime - SCENE_TIME_OFFSET_MS;
+    const ARTEMIS = window.ARTEMIS2;
+    if (!ARTEMIS) {
+        throw new Error('ARTEMIS2 data source is missing.');
     }
 
-    function simTimeFromMissionMet(metHours) {
-        return ARTEMIS2.LAUNCH_UTC + metHours * 3600000 + SCENE_TIME_OFFSET_MS;
-    }
-
-    function formatWarpLabel(w) {
-        const a = Math.abs(w);
-        const s = a >= 1000 ? a.toLocaleString('de-DE') : String(a);
-        return (w < 0 ? '−' : '') + s + '×';
-    }
-
-    function formatMissionMetReadout(metH) {
-        const totalSeconds = Math.max(0, metH * 3600);
-        const days = Math.floor(totalSeconds / 86400);
-        const hrs = Math.floor((totalSeconds % 86400) / 3600);
-        const mins = Math.floor((totalSeconds % 3600) / 60);
-        const secs = Math.floor(totalSeconds % 60);
-        return `T+ ${days}d ${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')} MET`;
-    }
-
-    function onMissionMetSliderInput() {
-        if (!missionMetSliderEl || totalMET_hours <= 0) return;
-        const t = missionMetSliderEl.valueAsNumber / 1000;
-        const met = t * totalMET_hours;
-        simTime = simTimeFromMissionMet(met);
-        if (missionMetReadoutEl) missionMetReadoutEl.textContent = formatMissionMetReadout(met);
-    }
-
-    function syncMissionMetSlider() {
-        if (!missionMetSliderEl || missionSliderDragging || totalMET_hours <= 0) return;
-        const met = ARTEMIS2.getMET(sceneTimeMs());
-        const clamped = Math.max(0, Math.min(met, totalMET_hours));
-        const pct = (clamped / totalMET_hours) * 1000;
-        missionMetSliderEl.value = String(Math.round(pct * 1000) / 1000);
-        if (missionMetReadoutEl) missionMetReadoutEl.textContent = formatMissionMetReadout(clamped);
-    }
-
-    /** Nur UI: MEZ- und T+-Anzeige gegenüber der Szenenzeit um +2 h */
-    const DISPLAY_TIME_OFFSET_MS = 2 * 60 * 60 * 1000;
-    const DISPLAY_MET_OFFSET_H = 2;
-
-    let timeWarp = 1;
-    /** Zeitraffer: 10× / −10× erneut = ×10 auf die aktuelle Stufe */
-    let warpStepMag = 10;
-    /** @type { 'idle' | 'forward' | 'backward' } */
-    let warpTrack = 'idle';
-
-    let freeCameraMode = false;
-    const flyKeys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
-
-    let followOrion = false;
-    let followMoon = false;
-    let lastFrameTime = performance.now();
-
-    /** Ab Kamera–Target-Distanz: alle Planetenbahnen sichtbar (Szeneinheiten ≈ 1000 km) */
-    const ORBITS_ALL_DISTANCE = 100000;
-    const ZOOM_DIST_MIN = 5;
-    const ZOOM_DIST_MAX = 10000000;
-    let zoomSliderEl = null;
-    let zoomReadoutEl = null;
-    let zoomSliderDragging = false;
-    let missionMetSliderEl = null;
-    let missionMetReadoutEl = null;
-    let missionSliderDragging = false;
-
-    const PANEL_UI_STORAGE_KEY = 'artemisobserver-panel-visibility';
-
-    function isMobileViewport() {
-        return typeof window.matchMedia === 'function' &&
-            window.matchMedia('(max-width: 768px)').matches;
-    }
-
-    function defaultPanelVisibility() {
-        if (isMobileViewport()) {
-            return { info: false, launch: false, controls: false, live: false };
-        }
-        return { info: true, launch: true, controls: true, live: true };
-    }
-
-    let panelVis = defaultPanelVisibility();
-
-    function readPanelState() {
-        const def = defaultPanelVisibility();
-        try {
-            const raw = localStorage.getItem(PANEL_UI_STORAGE_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                const merged = { ...def, ...parsed };
-                if (merged.live === undefined) merged.live = true;
-                return merged;
-            }
-        } catch (e) { /* ignore */ }
-        return def;
-    }
-
-    function writePanelState() {
-        try {
-            localStorage.setItem(PANEL_UI_STORAGE_KEY, JSON.stringify(panelVis));
-        } catch (e) { /* ignore */ }
-    }
-
-    function applyPanelVisibility() {
-        document.body.classList.toggle('ui-hide-info', !panelVis.info);
-        document.body.classList.toggle('ui-hide-launch', !panelVis.launch);
-        document.body.classList.toggle('ui-hide-controls', !panelVis.controls);
-        document.body.classList.toggle('ui-hide-livestream', !panelVis.live);
-    }
-
-    function initPanelVisibility() {
-        Object.assign(panelVis, readPanelState());
-        applyPanelVisibility();
-        document.addEventListener('click', (e) => {
-            const hideBtn = e.target.closest('.panel-collapse-btn[data-panel]');
-            if (hideBtn) {
-                const k = hideBtn.dataset.panel;
-                if (k !== 'info' && k !== 'launch' && k !== 'controls' && k !== 'live') return;
-                panelVis[k] = false;
-                applyPanelVisibility();
-                writePanelState();
-                return;
-            }
-            const restoreBtn = e.target.closest('.panel-restore-tab[data-panel]');
-            if (restoreBtn) {
-                const k = restoreBtn.dataset.panel;
-                if (k !== 'info' && k !== 'launch' && k !== 'controls' && k !== 'live') return;
-                panelVis[k] = true;
-                applyPanelVisibility();
-                writePanelState();
-            }
-        });
-    }
-
-    function toggleAllPanels() {
-        const anyOn = panelVis.info || panelVis.launch || panelVis.controls || panelVis.live;
-        if (anyOn) {
-            panelVis.info = false;
-            panelVis.launch = false;
-            panelVis.controls = false;
-            panelVis.live = false;
-        } else {
-            panelVis.info = true;
-            panelVis.launch = true;
-            panelVis.controls = true;
-            panelVis.live = true;
-        }
-        applyPanelVisibility();
-        writePanelState();
-    }
-
+    const UI_STORAGE_KEY = 'artemisobserver-ui-v2';
+    const SATELLITE_CACHE_KEY = 'artemisobserver-satellite-cache-v1';
+    const LAUNCH_FEED_DATA_URL = 'data/launch-feed.json';
+    const LAUNCH_DB_DATA_URL = 'data/launch-db.json';
+    const LAUNCH_STATS_DATA_URL = 'data/launch-stats.json';
+    const LAUNCH_VERIFY_WINDOW_MS = 15 * 60 * 1000;
+    const LAUNCH_SUCCESS_CHECK_DELAY_MS = 30 * 60 * 1000;
+    const LAUNCH_DATA_REFRESH_MS = 15 * 60 * 1000;
+    const SATELLITE_TLE_URL = 'data/active-satellites.tle';
+    const SATELLITE_LIB_CANDIDATES = [
+        'https://unpkg.com/satellite.js/dist/satellite.min.js',
+        'https://cdn.jsdelivr.net/npm/satellite.js@6.0.2/dist/satellite.min.js',
+        'https://unpkg.com/satellite.js@6.0.2/dist/satellite.min.js'
+    ];
+    const SATELLITE_FETCH_INTERVAL_MS = 2 * 60 * 60 * 1000;
+    const SATELLITE_PROPAGATION_INTERVAL_MS = 1000;
     const OBLIQUITY_RAD = 23.4393 * Math.PI / 180;
     const EARTH_POLE = new THREE.Vector3(-Math.sin(OBLIQUITY_RAD), Math.cos(OBLIQUITY_RAD), 0);
+    const EARTH_SIDEREAL_REFERENCE_OFFSET_RAD = Math.PI / 2;
+    const ORBITS_ALL_DISTANCE = 100000;
+    const ZOOM_DIST_MIN = 2.6;
+    const ZOOM_DIST_MAX = 10000000;
+    const EARTH_TEX_URL = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
+    const EARTH_BUMP_TEX_URL = 'https://unpkg.com/three-globe/example/img/earth-topology.png';
+    const EARTH_NIGHT_TEX_URL = 'https://unpkg.com/three-globe/example/img/earth-night.jpg';
+    const EARTH_CLOUD_TEX_URL = 'https://raw.githubusercontent.com/turban/webgl-earth/master/images/fair_clouds_4k.png';
+    const MOON_TEX_URL = 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a8/Solarsystemscope_texture_2k_moon.jpg/1024px-Solarsystemscope_texture_2k_moon.jpg';
+    const SATELLITE_RESULT_LIMIT = 40;
+    const SATELLITES_IN_ORBIT_ESTIMATE = 16910;
+    const ORBIT_REGIMES = ['LEO', 'MEO', 'GEO', 'HEO'];
+    const WGS84_EARTH_RADIUS_KM = 6378.137;
+    const EARTH_MU_KM3_S2 = 398600.4418;
+    const GEOSTATIONARY_ALTITUDE_KM = 35786;
+    const SIDEREAL_DAY_MINUTES = 1436.068;
+    const SATELLITE_LAYER_OPACITY = 0.88;
+    const SATELLITE_LAYER_DIMMED_OPACITY = 0.22;
+    const SATELLITE_PICK_THRESHOLD = 0.18;
+    const SCENE_CLICK_DRAG_TOLERANCE_PX = 7;
 
-    const MEZ_FORMAT = new Intl.DateTimeFormat('de-DE', {
-        timeZone: 'Europe/Berlin',
+    const localDateTime = new Intl.DateTimeFormat(undefined, {
         weekday: 'short',
         day: '2-digit',
         month: '2-digit',
@@ -198,358 +59,588 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         hour12: false
     });
 
-    let sunScenePos = new THREE.Vector3();
-    /** Beleuchtung folgt der Sonnenrichtung (wird mit simTime aktualisiert) */
-    let sunDirLight, fillDirLight, sunPointLight;
+    const localShortDateTime = new Intl.DateTimeFormat(undefined, {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZoneName: 'short'
+    });
 
-    let fullTrajectory = [];
-    let totalMET_hours = 240;
+    const localTimeOnly = new Intl.DateTimeFormat(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
 
-    // ── Textures ──
-    const textureLoader = new THREE.TextureLoader();
-    textureLoader.crossOrigin = 'anonymous';
-    const EARTH_TEX_URL = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
-    const MOON_TEX_URL = 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a8/Solarsystemscope_texture_2k_moon.jpg/1024px-Solarsystemscope_texture_2k_moon.jpg';
+    function getLocalTimeZoneLabel(date = new Date()) {
+        try {
+            const part = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
+                .formatToParts(date)
+                .find((entry) => entry.type === 'timeZoneName');
+            return part?.value || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Lokal';
+        } catch (error) {
+            return 'Lokal';
+        }
+    }
+
+    function getSatelliteLib() {
+        return window.satellite || null;
+    }
+
+    function loadExternalScript(src) {
+        return new Promise((resolve, reject) => {
+            const existing = document.querySelector(`script[data-external-script="${src}"]`);
+            if (existing) {
+                if (existing.dataset.loaded === 'true') {
+                    resolve();
+                    return;
+                }
+                if (existing.dataset.failed === 'true') {
+                    reject(new Error(`Failed to load ${src}`));
+                    return;
+                }
+                existing.addEventListener('load', () => resolve(), { once: true });
+                existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
+                return;
+            }
+
+            const script = document.createElement('script');
+            script.src = src;
+            script.async = true;
+            script.dataset.externalScript = src;
+            script.onload = () => {
+                script.dataset.loaded = 'true';
+                resolve();
+            };
+            script.onerror = () => {
+                script.dataset.failed = 'true';
+                reject(new Error(`Failed to load ${src}`));
+            };
+            document.head.appendChild(script);
+        });
+    }
+
+    async function ensureSatelliteLibrary() {
+        if (getSatelliteLib()) {
+            state.satelliteLibraryReady = true;
+            state.satelliteLastError = '';
+            return true;
+        }
+
+        const failedSources = [];
+        for (const source of SATELLITE_LIB_CANDIDATES) {
+            try {
+                await loadExternalScript(source);
+                if (getSatelliteLib()) {
+                    state.satelliteLibraryReady = true;
+                    state.satelliteLastError = '';
+                    return true;
+                }
+            } catch (error) {
+                failedSources.push(source);
+            }
+        }
+
+        state.satelliteLibraryReady = false;
+        state.satelliteLastError = `Satellitenbibliothek konnte nicht geladen werden (${failedSources.length} CDN-Versuche).`;
+        return false;
+    }
+
+    const state = {
+        scene: null,
+        camera: null,
+        renderer: null,
+        controls: null,
+        earthGroup: null,
+        earthMesh: null,
+        earthCloudMesh: null,
+        earthAtmosphereMesh: null,
+        earthGlowMesh: null,
+        earthRotationAngle: 0,
+        moonMesh: null,
+        sunMesh: null,
+        sunGlow: null,
+        earthLabel: null,
+        moonLabel: null,
+        orionMarker: null,
+        orionGlow: null,
+        orionLabel: null,
+        pastLine: null,
+        futureLine: null,
+        moonOrbitLine: null,
+        planetMeshes: {},
+        planetOrbits: {},
+        planetOrbitList: [],
+        dynamicLabels: [],
+        extraPickableMeshes: [],
+        pickableMeshes: [],
+        launchMarkerRoot: null,
+        launchMarkers: new Map(),
+        observerMarker: null,
+        observerPulse: null,
+        observerLocation: null,
+        observerWatchId: null,
+        satellitePoints: null,
+        satelliteHighlight: null,
+        satelliteCatalog: [],
+        satelliteIndex: new Map(),
+        satelliteCatalogLoaded: false,
+        satelliteLibraryReady: false,
+        satelliteLastError: '',
+        satelliteLiveCount: 0,
+        satelliteSearchQuery: '',
+        satelliteFilters: { LEO: true, MEO: true, GEO: true, HEO: true },
+        satelliteWorldPositions: new Map(),
+        satelliteDrawOrder: [],
+        followSatelliteId: null,
+        satelliteAutoHidNews: false,
+        followObserver: false,
+        satelliteLastPropagationMs: 0,
+        satelliteFetchTimer: null,
+        focusedBody: null,
+        focusLaunchId: null,
+        followMoon: false,
+        followOrion: false,
+        userNavigatingCamera: false,
+        freeCameraMode: false,
+        flyKeys: { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false },
+        raycaster: new THREE.Raycaster(),
+        pointerNdc: new THREE.Vector2(),
+        sunDirLight: null,
+        fillDirLight: null,
+        sunPointLight: null,
+        sunScenePos: new THREE.Vector3(),
+        simTime: Date.now(),
+        lastFrameTime: performance.now(),
+        timeWarp: 1,
+        warpStepMag: 10,
+        warpTrack: 'idle',
+        zoomSliderDragging: false,
+        missionSliderDragging: false,
+        pointerDownScreen: null,
+        sceneClickBlockedUntil: 0,
+        launches: [],
+        selectedLaunchId: null,
+        launchFeedMode: 'upcoming',
+        launchHistoryItems: [],
+        launchHistoryNextUrl: '',
+        launchHistoryLoading: false,
+        launchHistoryDone: false,
+        launchHistoryError: '',
+        launchCountdownTimer: null,
+        launchFeedFetchTimer: null,
+        launchHistoryFetchTimer: null,
+        launchWatchList: new Map(),
+        launchStreamUiKey: '',
+        launchSuccessStats: null,
+        launchSuccessStatsFetchedAt: 0,
+        launchDataGeneratedAt: '',
+        launchDataSource: '',
+        fullTrajectory: [],
+        totalMissionHours: 240,
+        artemisReplayEnabled: false,
+        artemisReplayInitialized: false,
+        missionTimelineActiveIndex: -1,
+        panelVisibility: readUiState()
+    };
+
+    const dom = {};
+
+    function sceneTimeMs() {
+        return state.simTime;
+    }
+
+    function simTimeFromMissionMet(metHours) {
+        return ARTEMIS.LAUNCH_UTC + metHours * 3600000;
+    }
+
+    function earthReferenceTimeMs() {
+        if (state.artemisReplayEnabled || state.timeWarp !== 1) {
+            return sceneTimeMs();
+        }
+        return Date.now();
+    }
+
+    function isMobileViewport() {
+        return typeof window.matchMedia === 'function' &&
+            window.matchMedia('(max-width: 960px)').matches;
+    }
+
+    function readUiState() {
+        const defaults = { news: true, watch: true, controls: true };
+        try {
+            const raw = localStorage.getItem(UI_STORAGE_KEY);
+            if (!raw) return defaults;
+            return { ...defaults, ...JSON.parse(raw) };
+        } catch (error) {
+            return defaults;
+        }
+    }
+
+    function writeUiState() {
+        try {
+            localStorage.setItem(UI_STORAGE_KEY, JSON.stringify(state.panelVisibility));
+        } catch (error) {
+            // ignore
+        }
+    }
+
+    async function fetchStaticJson(url) {
+        const response = await fetch(url, {
+            cache: 'no-cache',
+            headers: { Accept: 'application/json' }
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+    }
+
+    function dataAgeLabel(generatedAt) {
+        const date = generatedAt ? new Date(generatedAt) : null;
+        const savedAt = date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+        if (!savedAt) return 'noch nicht generiert';
+        const ageMs = Math.max(0, Date.now() - savedAt);
+        const minutes = Math.max(1, Math.round(ageMs / 60000));
+        if (minutes < 60) return `${minutes} min alt`;
+        const hours = Math.round(minutes / 60);
+        return `${hours} h alt`;
+    }
+
+    function writeSatelliteCache(rawText) {
+        try {
+            localStorage.setItem(SATELLITE_CACHE_KEY, JSON.stringify({
+                savedAt: Date.now(),
+                rawText
+            }));
+        } catch (error) {
+            // ignore
+        }
+    }
+
+    function readSatelliteCache() {
+        try {
+            const raw = localStorage.getItem(SATELLITE_CACHE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            return typeof parsed?.rawText === 'string' ? parsed : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function cacheDom() {
+        [
+            'canvas-container',
+            'real-time-zone',
+            'real-time-berlin',
+            'search-toggle',
+            'search-close',
+            'search-scrim',
+            'search-drawer',
+            'satellite-search-input',
+            'satellite-search-status',
+            'satellite-search-results',
+            'satellite-focus-panel',
+            'sat-focus-title',
+            'sat-focus-subtitle',
+            'sat-focus-type',
+            'sat-focus-operator',
+            'sat-focus-country',
+            'sat-focus-profile-source',
+            'sat-focus-regime',
+            'sat-focus-altitude',
+            'sat-focus-perigee',
+            'sat-focus-apogee',
+            'sat-focus-inclination',
+            'sat-focus-period',
+            'sat-focus-eccentricity',
+            'sat-focus-latitude',
+            'sat-focus-longitude',
+            'sat-focus-stop',
+            'sat-focus-stop-wide',
+            'settings-toggle',
+            'settings-close',
+            'settings-scrim',
+            'launch-stat-total',
+            'launch-stat-countdown',
+            'launch-stat-orgs',
+            'launch-stat-pads',
+            'launch-stat-success-week',
+            'launch-stat-success-week-delta',
+            'launch-stat-success-month',
+            'launch-stat-success-month-delta',
+            'launch-stat-success-year',
+            'launch-stat-success-year-delta',
+            'sat-stat-total',
+            'sat-stat-live',
+            'scene-mode-pill',
+            'focus-next-launch',
+            'launch-feed-status',
+            'launch-feed-items',
+            'launch-feed-refresh',
+            'launch-feed-upcoming',
+            'launch-feed-history',
+            'watch-launch-title',
+            'watch-launch-subtitle',
+            'watch-launch-provider',
+            'watch-launch-rocket',
+            'watch-launch-status',
+            'watch-launch-countdown',
+            'watch-launch-pad',
+            'watch-launch-window',
+            'watch-launch-coords',
+            'watch-launch-story',
+            'watch-launch-link',
+            'watch-launch-intel',
+            'watch-launch-stream',
+            'watch-launch-stream-state',
+            'watch-launch-stream-frame',
+            'watch-launch-stream-link',
+            'controls-panel',
+            'launch-feed-panel',
+            'control-focus-launch',
+            'earth-view-btn',
+            'observer-view-btn',
+            'moon-view-btn',
+            'solar-view-btn',
+            'free-cam-btn',
+            'jump-now-btn',
+            'warp-backward-btn',
+            'warp-reset-btn',
+            'warp-forward-btn',
+            'warp-display',
+            'zoom-slider',
+            'zoom-readout',
+            'settings-drawer',
+            'toggle-news',
+            'toggle-watch',
+            'toggle-controls',
+            'toggle-artemis-replay',
+            'met-clock',
+            'mission-phase',
+            'mission-date',
+            'dist-earth',
+            'dist-moon',
+            'velocity',
+            'mission-met-slider',
+            'mission-met-readout',
+            'mission-progress-fill',
+            'mission-timeline-items',
+            'jump-artemis-start',
+            'jump-artemis-end',
+            'follow-artemis'
+        ].forEach((id) => {
+            dom[id] = document.getElementById(id);
+        });
+    }
+
+    function applyPanelVisibility() {
+        document.body.classList.toggle('hide-news', !state.panelVisibility.news);
+        document.body.classList.toggle('hide-watch', !state.panelVisibility.watch);
+        document.body.classList.toggle('hide-controls', !state.panelVisibility.controls);
+
+        ['news', 'watch', 'controls'].forEach((key) => {
+            const button = dom['toggle-' + key];
+            if (!button) return;
+            button.setAttribute('aria-pressed', String(Boolean(state.panelVisibility[key])));
+        });
+    }
+
+    function openSettings() {
+        closeSearch();
+        document.body.classList.add('settings-open');
+        if (dom['settings-drawer']) dom['settings-drawer'].setAttribute('aria-hidden', 'false');
+    }
+
+    function closeSettings() {
+        document.body.classList.remove('settings-open');
+        if (dom['settings-drawer']) dom['settings-drawer'].setAttribute('aria-hidden', 'true');
+    }
+
+    function openSearch() {
+        closeSettings();
+        document.body.classList.add('search-open');
+        if (dom['search-drawer']) dom['search-drawer'].setAttribute('aria-hidden', 'false');
+        dom['satellite-search-input']?.focus();
+        renderSatelliteSearchResults();
+    }
+
+    function closeSearch() {
+        document.body.classList.remove('search-open');
+        if (dom['search-drawer']) dom['search-drawer'].setAttribute('aria-hidden', 'true');
+    }
+
+    function bindUi() {
+        dom['search-toggle']?.addEventListener('click', openSearch);
+        dom['search-close']?.addEventListener('click', closeSearch);
+        dom['search-scrim']?.addEventListener('click', closeSearch);
+        dom['settings-toggle']?.addEventListener('click', openSettings);
+        dom['settings-close']?.addEventListener('click', closeSettings);
+        dom['settings-scrim']?.addEventListener('click', closeSettings);
+
+        document.querySelectorAll('[data-ui-toggle]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const key = button.getAttribute('data-ui-toggle');
+                if (!key) return;
+                state.panelVisibility[key] = !state.panelVisibility[key];
+                applyPanelVisibility();
+                writeUiState();
+            });
+        });
+
+        dom['focus-next-launch']?.addEventListener('click', () => focusSelectedLaunch());
+        dom['control-focus-launch']?.addEventListener('click', () => focusSelectedLaunch());
+        dom['sat-focus-stop']?.addEventListener('click', stopSatelliteFollow);
+        dom['sat-focus-stop-wide']?.addEventListener('click', stopSatelliteFollow);
+        dom['earth-view-btn']?.addEventListener('click', resetView);
+        dom['observer-view-btn']?.addEventListener('click', toggleFollowObserver);
+        dom['moon-view-btn']?.addEventListener('click', toggleMoonView);
+        dom['solar-view-btn']?.addEventListener('click', solarSystemView);
+        dom['free-cam-btn']?.addEventListener('click', toggleFreeCamera);
+        dom['jump-now-btn']?.addEventListener('click', jumpToNow);
+        dom['warp-backward-btn']?.addEventListener('click', cycleWarpBackward);
+        dom['warp-reset-btn']?.addEventListener('click', warpToOne);
+        dom['warp-forward-btn']?.addEventListener('click', cycleWarpForward);
+        dom['toggle-artemis-replay']?.addEventListener('click', () => {
+            setArtemisReplayEnabled(!state.artemisReplayEnabled);
+        });
+        dom['jump-artemis-start']?.addEventListener('click', () => jumpToMissionMet(0));
+        dom['jump-artemis-end']?.addEventListener('click', () => jumpToMissionMet(state.totalMissionHours));
+        dom['follow-artemis']?.addEventListener('click', toggleFollowOrion);
+
+        if (dom['zoom-slider']) {
+            dom['zoom-slider'].addEventListener('pointerdown', () => { state.zoomSliderDragging = true; });
+            dom['zoom-slider'].addEventListener('pointerup', () => { state.zoomSliderDragging = false; });
+            dom['zoom-slider'].addEventListener('pointercancel', () => { state.zoomSliderDragging = false; });
+            dom['zoom-slider'].addEventListener('input', onZoomSliderInput);
+        }
+
+        if (dom['mission-met-slider']) {
+            dom['mission-met-slider'].addEventListener('pointerdown', () => { state.missionSliderDragging = true; });
+            dom['mission-met-slider'].addEventListener('pointerup', () => { state.missionSliderDragging = false; });
+            dom['mission-met-slider'].addEventListener('pointercancel', () => { state.missionSliderDragging = false; });
+            dom['mission-met-slider'].addEventListener('input', onMissionSliderInput);
+        }
+
+        dom['satellite-search-input']?.addEventListener('input', (event) => {
+            state.satelliteSearchQuery = event.target.value || '';
+            renderSatelliteSearchResults();
+        });
+
+        document.querySelectorAll('[data-sat-filter]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const regime = button.getAttribute('data-sat-filter');
+                if (!regime || !Object.prototype.hasOwnProperty.call(state.satelliteFilters, regime)) return;
+                state.satelliteFilters[regime] = !state.satelliteFilters[regime];
+                button.setAttribute('aria-pressed', String(state.satelliteFilters[regime]));
+                const followed = state.followSatelliteId ? state.satelliteIndex.get(state.followSatelliteId) : null;
+                if (followed && !orbitRegimeActive(followed.regime)) {
+                    clearFocusModes();
+                }
+                propagateSatellites(true);
+                renderSatelliteSearchResults();
+            });
+        });
+
+        window.addEventListener('resize', onResize);
+        window.addEventListener('keydown', onKeyDown);
+        window.addEventListener('keyup', onKeyUp);
+    }
 
     function init() {
-        // Renderer with logarithmic depth buffer for huge scale range
-        renderer = new THREE.WebGLRenderer({
-            antialias: true, alpha: false,
+        cacheDom();
+        applyPanelVisibility();
+        initScene();
+        bindUi();
+        buildMissionTimeline();
+        initLaunchFeed();
+        initObserverLocation();
+        initSatelliteTracking();
+        ARTEMIS.onDataLoaded(() => {
+            state.fullTrajectory = ARTEMIS.getFullTrajectoryPoints(0.5);
+            const wp = ARTEMIS.WAYPOINTS;
+            if (wp.length > 0) state.totalMissionHours = wp[wp.length - 1].t;
+            syncMissionSlider();
+            updateArtemisPanel(Math.max(0, Math.min(ARTEMIS.getMET(sceneTimeMs()), state.totalMissionHours)));
+        });
+        refreshWarpButtons();
+        refreshSceneModePill();
+        animate();
+    }
+
+    function initScene() {
+        state.renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            alpha: false,
             logarithmicDepthBuffer: true
         });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.2;
-        document.getElementById('canvas-container').appendChild(renderer.domElement);
+        state.renderer.setSize(window.innerWidth, window.innerHeight);
+        state.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        state.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        state.renderer.toneMappingExposure = 1.18;
+        dom['canvas-container'].appendChild(state.renderer.domElement);
 
-        scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x000008);
+        state.scene = new THREE.Scene();
+        state.scene.background = new THREE.Color(0x030610);
 
-        // Camera — far plane large enough for Neptune
-        camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 20000000);
-        camera.position.set(0, 250, 450);
+        state.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.02, 20000000);
+        state.camera.position.set(0, 160, 300);
 
-        controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.08;
-        controls.minDistance = 5;
-        controls.maxDistance = 10000000;
-        controls.target.set(0, 0, 0);
+        state.controls = new OrbitControls(state.camera, state.renderer.domElement);
+        state.controls.enableDamping = true;
+        state.controls.dampingFactor = 0.08;
+        state.controls.minDistance = 2.6;
+        state.controls.maxDistance = ZOOM_DIST_MAX;
+        state.controls.target.set(0, 0, 0);
+        state.controls.addEventListener('start', onControlStart);
+        state.controls.addEventListener('end', onControlEnd);
 
-        const ambientLight = new THREE.AmbientLight(0x333344, 1.5);
-        scene.add(ambientLight);
+        state.scene.add(new THREE.AmbientLight(0x334055, 1.6));
 
-        const T0 = ARTEMIS2.getJulianCenturies(sceneTimeMs());
-        const sp0 = ARTEMIS2.getSunPosition(T0);
-        sunScenePos.set(sp0.x, sp0.y, sp0.z);
-        const sunDir0 = sunScenePos.clone().normalize();
-        sunDirLight = new THREE.DirectionalLight(0xffffff, 3);
-        sunDirLight.position.copy(sunDir0.clone().multiplyScalar(500));
-        scene.add(sunDirLight);
-        fillDirLight = new THREE.DirectionalLight(0x4466aa, 0.5);
-        fillDirLight.position.copy(sunDir0.clone().multiplyScalar(-200));
-        scene.add(fillDirLight);
+        const T0 = ARTEMIS.getJulianCenturies(sceneTimeMs());
+        const sp0 = ARTEMIS.getSunPosition(T0);
+        state.sunScenePos.set(sp0.x, sp0.y, sp0.z);
+        const sunDir0 = state.sunScenePos.clone().normalize();
+
+        state.sunDirLight = new THREE.DirectionalLight(0xffffff, 3);
+        state.sunDirLight.position.copy(sunDir0.clone().multiplyScalar(500));
+        state.scene.add(state.sunDirLight);
+
+        state.fillDirLight = new THREE.DirectionalLight(0x4168ad, 0.5);
+        state.fillDirLight.position.copy(sunDir0.clone().multiplyScalar(-260));
+        state.scene.add(state.fillDirLight);
 
         createStarField();
         createEarth();
         createMoon();
-        createOrion();
         createSun();
         createPlanets();
-        createTrajectoryLines();
         createLabels();
         createNorthPoleAxis();
         createMoonOrbit();
-
+        createArtemisObjects();
+        createTrajectoryLines();
         buildPickableList();
-        renderer.domElement.addEventListener('click', onSceneClick);
-        window.addEventListener('keydown', onKeyDown);
-        window.addEventListener('keyup', onKeyUp);
 
-        initControlSectionTabs();
-
-        zoomSliderEl = document.getElementById('zoom-slider');
-        zoomReadoutEl = document.getElementById('zoom-readout');
-        if (zoomSliderEl) {
-            zoomSliderEl.addEventListener('pointerdown', () => { zoomSliderDragging = true; });
-            zoomSliderEl.addEventListener('pointerup', () => { zoomSliderDragging = false; });
-            zoomSliderEl.addEventListener('pointercancel', () => { zoomSliderDragging = false; });
-            zoomSliderEl.addEventListener('input', onZoomSliderInput);
-        }
-
-        missionMetSliderEl = document.getElementById('mission-met-slider');
-        missionMetReadoutEl = document.getElementById('mission-met-readout');
-        if (missionMetSliderEl) {
-            missionMetSliderEl.addEventListener('pointerdown', () => { missionSliderDragging = true; });
-            missionMetSliderEl.addEventListener('pointerup', () => { missionSliderDragging = false; });
-            missionMetSliderEl.addEventListener('pointercancel', () => { missionSliderDragging = false; });
-            missionMetSliderEl.addEventListener('input', onMissionMetSliderInput);
-        }
-
-        window.addEventListener('resize', onResize);
-
-        simTime = Date.now();
-
-        ARTEMIS2.onDataLoaded(() => {
-            fullTrajectory = ARTEMIS2.getFullTrajectoryPoints(0.5);
-            const wp = ARTEMIS2.WAYPOINTS;
-            if (wp.length > 0) totalMET_hours = wp[wp.length - 1].t;
-            updateTrajectoryLines(ARTEMIS2.getMET(sceneTimeMs()));
-            syncMissionMetSlider();
-        });
-
-        initLaunchFeed();
-        initPanelVisibility();
-
-        refreshWarpButtons();
-
-        animate();
+        state.renderer.domElement.addEventListener('click', onSceneClick);
+        state.renderer.domElement.addEventListener('pointerdown', onScenePointerDown);
+        state.renderer.domElement.addEventListener('pointermove', onScenePointerMove);
+        state.renderer.domElement.addEventListener('pointerup', onScenePointerUp);
+        state.renderer.domElement.addEventListener('pointercancel', onScenePointerCancel);
+        updateEarthRotation(earthReferenceTimeMs());
+        resetView();
+        updateArtemisVisibility();
     }
 
-    function initControlSectionTabs() {
-        const tabSpace = document.getElementById('ctrl-tab-space');
-        const tabTime = document.getElementById('ctrl-tab-time');
-        const secSpace = document.getElementById('controls-section-space');
-        const secTime = document.getElementById('controls-section-time');
-        if (!tabSpace || !tabTime || !secSpace || !secTime) return;
-        function activateSpace() {
-            tabSpace.classList.add('active');
-            tabTime.classList.remove('active');
-            tabSpace.setAttribute('aria-selected', 'true');
-            tabTime.setAttribute('aria-selected', 'false');
-            secSpace.style.display = '';
-            secTime.style.display = 'none';
-        }
-        function activateTime() {
-            tabTime.classList.add('active');
-            tabSpace.classList.remove('active');
-            tabTime.setAttribute('aria-selected', 'true');
-            tabSpace.setAttribute('aria-selected', 'false');
-            secTime.style.display = '';
-            secSpace.style.display = 'none';
-        }
-        tabSpace.addEventListener('click', activateSpace);
-        tabTime.addEventListener('click', activateTime);
-    }
-
-    function refreshWarpButtons() {
-        const w1 = document.querySelector('.warp-btn-w1');
-        const wf = document.querySelector('.warp-btn-wf');
-        const wb = document.querySelector('.warp-btn-wb');
-        [w1, wf, wb].forEach((b) => { if (b) b.classList.remove('active'); });
-        if (timeWarp === 1) {
-            if (w1) w1.classList.add('active');
-        } else if (timeWarp > 0) {
-            if (wf) wf.classList.add('active');
-        } else {
-            if (wb) wb.classList.add('active');
-        }
-    }
-
-    function warpToOne() {
-        timeWarp = 1;
-        warpTrack = 'idle';
-        warpStepMag = 10;
-        refreshWarpButtons();
-        const wd = document.getElementById('warp-display');
-        if (wd) wd.textContent = formatWarpLabel(timeWarp);
-    }
-
-    function cycleWarpForward() {
-        if (warpTrack === 'forward' && timeWarp >= 10) {
-            warpStepMag = Math.min(warpStepMag * 10, 1e12);
-        } else {
-            warpStepMag = 10;
-        }
-        warpTrack = 'forward';
-        timeWarp = warpStepMag;
-        refreshWarpButtons();
-        const wd = document.getElementById('warp-display');
-        if (wd) wd.textContent = formatWarpLabel(timeWarp);
-    }
-
-    function cycleWarpBackward() {
-        if (warpTrack === 'backward' && timeWarp <= -10) {
-            warpStepMag = Math.min(warpStepMag * 10, 1e12);
-        } else {
-            warpStepMag = 10;
-        }
-        warpTrack = 'backward';
-        timeWarp = -warpStepMag;
-        refreshWarpButtons();
-        const wd = document.getElementById('warp-display');
-        if (wd) wd.textContent = formatWarpLabel(timeWarp);
-    }
-
-    window.warpToOne = warpToOne;
-    window.cycleWarpForward = cycleWarpForward;
-    window.cycleWarpBackward = cycleWarpBackward;
-
-    // ── Launch feed (Launch Library 2 / The Space Devs) ──
-    const LAUNCH_API = 'https://ll.thespacedevs.com/2.2.0/launch/upcoming/';
-    let launchCountdownTimer = null;
-    let launchFeedFetchTimer = null;
-
-    function escapeHtml(text) {
-        const d = document.createElement('div');
-        d.textContent = text == null ? '' : String(text);
-        return d.innerHTML;
-    }
-
-    function isEarthLaunch(launch) {
-        const pad = launch.pad;
-        if (!pad) return false;
-        const lat = parseFloat(pad.latitude);
-        const lon = parseFloat(pad.longitude);
-        if (Number.isNaN(lat) || Number.isNaN(lon)) return false;
-        return true;
-    }
-
-    function launchInstant(launch) {
-        const s = launch.net || launch.window_start;
-        if (!s) return null;
-        const d = new Date(s);
-        return Number.isNaN(d.getTime()) ? null : d;
-    }
-
-    /** Anbieter / Organisation (z. B. SpaceX, Rocket Lab) — LL2: launch_service_provider */
-    function launchOrganization(launch) {
-        const lsp = launch.launch_service_provider;
-        if (lsp && lsp.name) return String(lsp.name).trim();
-        const cfg = launch.rocket && launch.rocket.configuration;
-        const mfg = cfg && cfg.manufacturer;
-        if (mfg && mfg.name) return String(mfg.name).trim();
-        return '';
-    }
-
-    function formatLaunchCountdown(target) {
-        if (!target) return '—';
-        const diff = target.getTime() - Date.now();
-        if (diff <= 0) return 'Startfenster erreicht / live';
-        const sec = Math.floor(diff / 1000);
-        const s = sec % 60;
-        const m = Math.floor(sec / 60) % 60;
-        const h = Math.floor(sec / 3600) % 24;
-        const days = Math.floor(sec / 86400);
-        const pad2 = (n) => String(n).padStart(2, '0');
-        if (days > 0) return `noch ${days}d ${pad2(h)}:${pad2(m)}:${pad2(s)}`;
-        return `noch ${pad2(h)}:${pad2(m)}:${pad2(s)}`;
-    }
-
-    function renderLaunchFeed(items) {
-        const container = document.getElementById('launch-feed-items');
-        if (!container) return;
-        container.innerHTML = '';
-        if (items.length === 0) {
-            container.innerHTML = '<div class="launch-error">Keine anstehenden Starts mit Boden-/Seekoordinaten gefunden.</div>';
-            return;
-        }
-        for (const l of items) {
-            const when = launchInstant(l);
-            if (!when) continue;
-            const org = launchOrganization(l);
-            const rocket = l.rocket && l.rocket.configuration
-                ? (l.rocket.configuration.full_name || l.rocket.configuration.name || '')
-                : '';
-            const pad = (l.pad && l.pad.name) ? l.pad.name : '';
-            const loc = (l.pad && l.pad.location && l.pad.location.name) ? l.pad.location.name : '';
-            const netStr = when.toLocaleString('de-DE', {
-                timeZone: 'Europe/Berlin',
-                day: '2-digit',
-                month: '2-digit',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                timeZoneName: 'short'
-            });
-            const item = document.createElement('div');
-            item.className = 'launch-item';
-            const cd = document.createElement('div');
-            cd.className = 'launch-countdown';
-            cd.setAttribute('data-net', when.toISOString());
-            cd.textContent = formatLaunchCountdown(when);
-            item.innerHTML =
-                '<div class="launch-name">' + escapeHtml(l.name || 'Unbenannt') + '</div>' +
-                (org
-                    ? '<div class="launch-org">' + escapeHtml(org) + '</div>'
-                    : '') +
-                '<div class="launch-meta">' +
-                escapeHtml(rocket || '—') + '<br>' +
-                escapeHtml([pad, loc].filter(Boolean).join(' · ') || '—') +
-                '</div>' +
-                '<div class="launch-net">Net: ' + escapeHtml(netStr) + '</div>';
-            item.appendChild(cd);
-            container.appendChild(item);
-        }
-    }
-
-    async function fetchLaunches() {
-        const statusEl = document.getElementById('launch-feed-status');
-        const container = document.getElementById('launch-feed-items');
-        if (statusEl) statusEl.textContent = 'Lade …';
-        try {
-            const url = LAUNCH_API + '?limit=40&mode=detailed';
-            const res = await fetch(url, { headers: { Accept: 'application/json' } });
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            const data = await res.json();
-            const list = (data.results || []).filter(isEarthLaunch);
-            list.sort((a, b) => {
-                const ta = launchInstant(a);
-                const tb = launchInstant(b);
-                if (!ta || !tb) return 0;
-                return ta - tb;
-            });
-            const top = list.slice(0, 18);
-            renderLaunchFeed(top);
-            if (statusEl) {
-                statusEl.textContent = 'Aktualisiert: ' + new Date().toLocaleTimeString('de-DE') +
-                    ' · ' + top.length + ' Termine';
-            }
-        } catch (e) {
-            if (container) {
-                container.innerHTML =
-                    '<div class="launch-error">Der Start-Feed konnte nicht geladen werden (Netzwerk oder CORS). ' +
-                    'Lokal die Seite über einen kleinen Server öffnen oder später erneut versuchen.</div>';
-            }
-            if (statusEl) statusEl.textContent = 'Fehler';
-        }
-    }
-
-    function tickLaunchCountdowns() {
-        document.querySelectorAll('#launch-feed-items .launch-countdown[data-net]').forEach((el) => {
-            const iso = el.getAttribute('data-net');
-            if (!iso) return;
-            const t = new Date(iso);
-            el.textContent = formatLaunchCountdown(t);
-        });
-    }
-
-    function initLaunchFeed() {
-        const btn = document.getElementById('launch-feed-refresh');
-        if (btn) {
-            btn.addEventListener('click', () => fetchLaunches());
-            btn.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fetchLaunches(); }
-            });
-        }
-        fetchLaunches();
-        if (launchFeedFetchTimer) clearInterval(launchFeedFetchTimer);
-        launchFeedFetchTimer = setInterval(fetchLaunches, 15 * 60 * 1000);
-        if (launchCountdownTimer) clearInterval(launchCountdownTimer);
-        launchCountdownTimer = setInterval(tickLaunchCountdowns, 1000);
-    }
-
-    window.refreshLaunchFeed = fetchLaunches;
-
-    // ── Stars (all far enough to be outside the solar system) ──
     function createStarField() {
-        addStarLayer(10000, 8000000, 16000000, 2000);
-        addStarLayer(4000, 10000000, 18000000, 6000);
+        addStarLayer(12000, 9000000, 17000000, 1800);
+        addStarLayer(4200, 10000000, 18000000, 5200);
     }
 
     function addStarLayer(count, rMin, rMax, size) {
-        const geo = new THREE.BufferGeometry();
+        const geometry = new THREE.BufferGeometry();
         const positions = new Float32Array(count * 3);
         for (let i = 0; i < count; i++) {
             const r = rMin + Math.random() * (rMax - rMin);
@@ -559,611 +650,2574 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
             positions[i * 3 + 2] = r * Math.cos(phi);
         }
-        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        const mat = new THREE.PointsMaterial({
-            color: 0xffffff, size, sizeAttenuation: true,
-            transparent: true, opacity: 0.8
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const material = new THREE.PointsMaterial({
+            color: 0xffffff,
+            size,
+            sizeAttenuation: true,
+            transparent: true,
+            opacity: 0.78
         });
-        scene.add(new THREE.Points(geo, mat));
+        state.scene.add(new THREE.Points(geometry, material));
     }
-
-    // ── Earth (tilted by obliquity) ──
-    let earthGroup;
 
     function createEarth() {
-        earthGroup = new THREE.Group();
-        earthGroup.rotation.z = OBLIQUITY_RAD;
-        scene.add(earthGroup);
+        state.earthGroup = new THREE.Group();
+        state.earthGroup.rotation.z = OBLIQUITY_RAD;
+        state.scene.add(state.earthGroup);
 
-        const geo = new THREE.SphereGeometry(ARTEMIS2.EARTH_RADIUS, 64, 64);
-        const mat = new THREE.MeshPhongMaterial({
-            color: 0x4488cc, emissive: 0x112233,
-            emissiveIntensity: 0.1, shininess: 25
-        });
-        textureLoader.load(EARTH_TEX_URL, (tex) => {
-            mat.map = tex;
-            mat.color.set(0xffffff);
-            mat.needsUpdate = true;
-        });
-        earthMesh = new THREE.Mesh(geo, mat);
-        earthMesh.userData.pickKind = 'planet';
-        earthMesh.userData.planetIndex = 2;
-        planetMeshByIndex[2] = earthMesh;
-        earthGroup.add(earthMesh);
+        const loader = new THREE.TextureLoader();
+        loader.crossOrigin = 'anonymous';
 
-        const glowGeo = new THREE.SphereGeometry(ARTEMIS2.EARTH_RADIUS * 1.02, 64, 64);
-        const glowMat = new THREE.MeshBasicMaterial({
-            color: 0x4488ff, transparent: true, opacity: 0.08, side: THREE.BackSide
+        const geometry = new THREE.SphereGeometry(ARTEMIS.EARTH_RADIUS, 128, 128);
+        const material = new THREE.MeshPhongMaterial({
+            color: 0x4d8fcc,
+            emissive: 0x0b1422,
+            emissiveIntensity: 0.08,
+            specular: new THREE.Color(0x274969),
+            shininess: 18
         });
-        earthGroup.add(new THREE.Mesh(glowGeo, glowMat));
+        loader.load(EARTH_TEX_URL, (texture) => {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            material.map = texture;
+            material.color.set(0xffffff);
+            material.needsUpdate = true;
+        });
+        loader.load(EARTH_BUMP_TEX_URL, (texture) => {
+            material.bumpMap = texture;
+            material.bumpScale = 0.22;
+            material.needsUpdate = true;
+        }, undefined, () => { /* optional */ });
+        loader.load(EARTH_NIGHT_TEX_URL, (texture) => {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            material.emissiveMap = texture;
+            material.emissiveIntensity = 0.12;
+            material.needsUpdate = true;
+        }, undefined, () => { /* optional */ });
+
+        state.earthMesh = new THREE.Mesh(geometry, material);
+        state.earthMesh.userData.pickKind = 'planet';
+        state.earthMesh.userData.planetIndex = 2;
+        state.earthGroup.add(state.earthMesh);
+
+        state.earthCloudMesh = new THREE.Mesh(
+            new THREE.SphereGeometry(ARTEMIS.EARTH_RADIUS * 1.012, 96, 96),
+            new THREE.MeshPhongMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.18,
+                depthWrite: false
+            })
+        );
+        loader.load(EARTH_CLOUD_TEX_URL, (texture) => {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            state.earthCloudMesh.material.map = texture;
+            state.earthCloudMesh.material.alphaMap = texture;
+            state.earthCloudMesh.material.opacity = 0.34;
+            state.earthCloudMesh.material.needsUpdate = true;
+        }, undefined, () => { /* optional */ });
+        state.earthGroup.add(state.earthCloudMesh);
+
+        state.earthAtmosphereMesh = new THREE.Mesh(
+            new THREE.SphereGeometry(ARTEMIS.EARTH_RADIUS * 1.05, 96, 96),
+            new THREE.MeshLambertMaterial({
+                color: 0x5ab8ff,
+                transparent: true,
+                opacity: 0.09,
+                side: THREE.BackSide,
+                depthWrite: false
+            })
+        );
+        state.earthGroup.add(state.earthAtmosphereMesh);
+
+        const glow = new THREE.Mesh(
+            new THREE.SphereGeometry(ARTEMIS.EARTH_RADIUS * 1.09, 96, 96),
+            new THREE.MeshBasicMaterial({
+                color: 0x2f89ff,
+                transparent: true,
+                opacity: 0.045,
+                side: THREE.BackSide,
+                depthWrite: false
+            })
+        );
+        state.earthGlowMesh = glow;
+        state.earthGroup.add(glow);
+
+        state.launchMarkerRoot = new THREE.Group();
+        state.earthMesh.add(state.launchMarkerRoot);
+
+        state.observerMarker = new THREE.Group();
+        state.observerMarker.visible = false;
+
+        const observerStem = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.03, 0.03, 0.55, 12),
+            new THREE.MeshBasicMaterial({ color: 0x7affd8 })
+        );
+        observerStem.position.y = 0.26;
+
+        const observerHead = new THREE.Mesh(
+            new THREE.SphereGeometry(0.15, 18, 18),
+            new THREE.MeshBasicMaterial({ color: 0xefffff })
+        );
+        observerHead.position.y = 0.56;
+
+        state.observerPulse = new THREE.Mesh(
+            new THREE.SphereGeometry(0.24, 18, 18),
+            new THREE.MeshBasicMaterial({
+                color: 0x53ffe8,
+                transparent: true,
+                opacity: 0.18,
+                depthWrite: false
+            })
+        );
+        state.observerPulse.position.copy(observerHead.position);
+
+        state.observerMarker.add(observerStem, observerHead, state.observerPulse);
+        state.earthMesh.add(state.observerMarker);
+
+        state.satellitePoints = new THREE.Points(
+            new THREE.BufferGeometry(),
+            new THREE.PointsMaterial({
+                size: 0.11,
+                sizeAttenuation: true,
+                vertexColors: true,
+                transparent: true,
+                opacity: SATELLITE_LAYER_OPACITY,
+                depthWrite: false
+            })
+        );
+        state.satellitePoints.frustumCulled = false;
+        state.satellitePoints.visible = false;
+        state.earthMesh.add(state.satellitePoints);
+
+        state.satelliteHighlight = createSatelliteHighlightMarker();
+        state.satelliteHighlight.visible = false;
+        state.earthMesh.add(state.satelliteHighlight);
     }
 
-    // ── Moon ──
+    function createSatelliteHighlightTexture() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+        const cx = 64;
+        const cy = 64;
+        const gradient = ctx.createRadialGradient(cx, cy, 2, cx, cy, 58);
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        gradient.addColorStop(0.16, 'rgba(255, 229, 139, 0.95)');
+        gradient.addColorStop(0.42, 'rgba(95, 216, 255, 0.38)');
+        gradient.addColorStop(0.72, 'rgba(95, 216, 255, 0.13)');
+        gradient.addColorStop(1, 'rgba(95, 216, 255, 0)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = 'rgba(255, 231, 154, 0.86)';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 34, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(cx - 44, cy);
+        ctx.lineTo(cx - 20, cy);
+        ctx.moveTo(cx + 20, cy);
+        ctx.lineTo(cx + 44, cy);
+        ctx.moveTo(cx, cy - 44);
+        ctx.lineTo(cx, cy - 20);
+        ctx.moveTo(cx, cy + 20);
+        ctx.lineTo(cx, cy + 44);
+        ctx.stroke();
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        return texture;
+    }
+
+    function createSatelliteHighlightMarker() {
+        const group = new THREE.Group();
+        const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: createSatelliteHighlightTexture(),
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.95,
+            depthWrite: false
+        }));
+        glow.userData.baseScale = 1.55;
+        glow.frustumCulled = false;
+
+        const core = new THREE.Mesh(
+            new THREE.SphereGeometry(0.08, 16, 16),
+            new THREE.MeshBasicMaterial({
+                color: 0xfff2a8,
+                transparent: true,
+                opacity: 0.98,
+                depthWrite: false
+            })
+        );
+        core.frustumCulled = false;
+
+        group.add(glow, core);
+        group.userData.glow = glow;
+        group.userData.core = core;
+        group.frustumCulled = false;
+        return group;
+    }
+
     function createMoon() {
-        const geo = new THREE.SphereGeometry(ARTEMIS2.MOON_RADIUS, 32, 32);
-        const mat = new THREE.MeshPhongMaterial({ color: 0xaaaaaa, shininess: 5 });
-        textureLoader.load(MOON_TEX_URL, (tex) => {
-            mat.map = tex; mat.color.set(0xffffff); mat.needsUpdate = true;
+        const loader = new THREE.TextureLoader();
+        loader.crossOrigin = 'anonymous';
+
+        const geometry = new THREE.SphereGeometry(ARTEMIS.MOON_RADIUS, 32, 32);
+        const material = new THREE.MeshPhongMaterial({ color: 0xaaaaaa, shininess: 5 });
+        loader.load(MOON_TEX_URL, (texture) => {
+            material.map = texture;
+            material.color.set(0xffffff);
+            material.needsUpdate = true;
         });
-        moonMesh = new THREE.Mesh(geo, mat);
-        moonMesh.userData.pickKind = 'moon';
-        scene.add(moonMesh);
+
+        state.moonMesh = new THREE.Mesh(geometry, material);
+        state.moonMesh.userData.pickKind = 'moon';
+        state.scene.add(state.moonMesh);
     }
 
-    // ── Orion capsule marker ──
-    function createOrion() {
-        const geo = new THREE.SphereGeometry(1.5, 16, 16);
-        const mat = new THREE.MeshBasicMaterial({ color: 0x00ffaa });
-        orionMarker = new THREE.Mesh(geo, mat);
-        scene.add(orionMarker);
-
-        const glowGeo = new THREE.SphereGeometry(3, 16, 16);
-        const glowMat = new THREE.MeshBasicMaterial({
-            color: 0x00ffaa, transparent: true, opacity: 0.25
-        });
-        orionGlow = new THREE.Mesh(glowGeo, glowMat);
-        scene.add(orionGlow);
-    }
-
-    // ── Sun (real distance) ──
     function createSun() {
         const sunVisualRadius = 5000;
+        state.sunMesh = new THREE.Mesh(
+            new THREE.SphereGeometry(sunVisualRadius, 32, 32),
+            new THREE.MeshBasicMaterial({ color: 0xffee88 })
+        );
+        state.sunMesh.userData.pickKind = 'sun';
+        state.sunMesh.position.copy(state.sunScenePos);
+        state.scene.add(state.sunMesh);
 
-        const geo = new THREE.SphereGeometry(sunVisualRadius, 32, 32);
-        const mat = new THREE.MeshBasicMaterial({ color: 0xffee88 });
-        sunMesh = new THREE.Mesh(geo, mat);
-        sunMesh.userData.pickKind = 'sun';
-        sunMesh.position.copy(sunScenePos);
-        scene.add(sunMesh);
-
-        // Glow sprite
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = 256; canvas.height = 256;
-        const grad = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
-        grad.addColorStop(0, 'rgba(255,255,220,1)');
-        grad.addColorStop(0.1, 'rgba(255,230,120,0.8)');
-        grad.addColorStop(0.3, 'rgba(255,200,60,0.3)');
-        grad.addColorStop(1, 'rgba(255,160,0,0)');
-        ctx.fillStyle = grad;
+        const glowCanvas = document.createElement('canvas');
+        glowCanvas.width = 256;
+        glowCanvas.height = 256;
+        const ctx = glowCanvas.getContext('2d');
+        const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+        gradient.addColorStop(0, 'rgba(255,255,220,1)');
+        gradient.addColorStop(0.1, 'rgba(255,230,120,0.8)');
+        gradient.addColorStop(0.3, 'rgba(255,200,60,0.3)');
+        gradient.addColorStop(1, 'rgba(255,160,0,0)');
+        ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, 256, 256);
-        const tex = new THREE.CanvasTexture(canvas);
-        const spriteMat = new THREE.SpriteMaterial({
-            map: tex, transparent: true,
-            blending: THREE.AdditiveBlending, depthTest: false
-        });
-        sunGlow = new THREE.Sprite(spriteMat);
-        sunGlow.scale.set(40000, 40000, 1);
-        sunGlow.position.copy(sunScenePos);
-        scene.add(sunGlow);
 
-        sunLabel = makeTextSprite('Sonne', '#ffdd66');
-        sunLabel.position.copy(sunScenePos.clone().add(new THREE.Vector3(0, sunVisualRadius + 3000, 0)));
-        scene.add(sunLabel);
-        sunLabel._offsetY = sunVisualRadius + 3000;
-        sunLabel._anchor = sunScenePos;
-        dynamicLabels.push(sunLabel);
+        state.sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: new THREE.CanvasTexture(glowCanvas),
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthTest: false
+        }));
+        state.sunGlow.scale.set(40000, 40000, 1);
+        state.sunGlow.position.copy(state.sunScenePos);
+        state.scene.add(state.sunGlow);
 
-        sunPointLight = new THREE.PointLight(0xffffcc, 0.8, ARTEMIS2.AU * 35);
-        sunPointLight.position.copy(sunScenePos);
-        scene.add(sunPointLight);
+        state.sunPointLight = new THREE.PointLight(0xffffcc, 0.8, ARTEMIS.AU * 35);
+        state.sunPointLight.position.copy(state.sunScenePos);
+        state.scene.add(state.sunPointLight);
+
+        const label = makeTextSprite('Sonne', '#ffdc77');
+        label.position.copy(state.sunScenePos.clone().add(new THREE.Vector3(0, sunVisualRadius + 3000, 0)));
+        label._offsetY = sunVisualRadius + 3000;
+        label._anchor = state.sunScenePos;
+        state.dynamicLabels.push(label);
+        state.scene.add(label);
     }
 
-    // ── Planets (Positionen & Bahnen folgen simTime über updateSolarSystem) ──
     function createPlanets() {
-        const planets = ARTEMIS2.PLANETS;
-        const T0 = ARTEMIS2.getJulianCenturies(sceneTimeMs());
-
-        for (let i = 0; i < planets.length; i++) {
+        const T0 = ARTEMIS.getJulianCenturies(sceneTimeMs());
+        for (let i = 0; i < ARTEMIS.PLANETS.length; i++) {
             if (i === 2) continue;
 
-            const p = planets[i];
-            const pos = ARTEMIS2.getPlanetPosition(i, T0);
-            const displayRadius = Math.max(p.radius * 100, 1000);
+            const planet = ARTEMIS.PLANETS[i];
+            const pos = ARTEMIS.getPlanetPosition(i, T0);
+            const displayRadius = Math.max(planet.radius * 100, 1000);
 
-            const geo = new THREE.SphereGeometry(displayRadius, 24, 24);
-            const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(p.color) });
-            const mesh = new THREE.Mesh(geo, mat);
+            const mesh = new THREE.Mesh(
+                new THREE.SphereGeometry(displayRadius, 24, 24),
+                new THREE.MeshBasicMaterial({ color: new THREE.Color(planet.color) })
+            );
             mesh.position.set(pos.x, pos.y, pos.z);
             mesh.userData.pickKind = 'planet';
             mesh.userData.planetIndex = i;
-            planetMeshByIndex[i] = mesh;
-            scene.add(mesh);
+            state.planetMeshes[i] = mesh;
+            state.scene.add(mesh);
 
-            if (p.hasRings) {
-                const ringGeo = new THREE.RingGeometry(displayRadius * 1.4, displayRadius * 2.3, 64);
-                const ringMat = new THREE.MeshBasicMaterial({
-                    color: 0xddcc99, transparent: true, opacity: 0.5, side: THREE.DoubleSide
-                });
-                const ring = new THREE.Mesh(ringGeo, ringMat);
+            if (planet.hasRings) {
+                const ring = new THREE.Mesh(
+                    new THREE.RingGeometry(displayRadius * 1.4, displayRadius * 2.3, 64),
+                    new THREE.MeshBasicMaterial({
+                        color: 0xddcc99,
+                        transparent: true,
+                        opacity: 0.5,
+                        side: THREE.DoubleSide
+                    })
+                );
                 ring.rotation.x = Math.PI * 0.42;
                 ring.position.copy(mesh.position);
                 ring.userData.pickKind = 'planet';
                 ring.userData.planetIndex = i;
-                scene.add(ring);
-                extraPickableMeshes.push(ring);
                 mesh.userData.saturnRing = ring;
+                state.extraPickableMeshes.push(ring);
+                state.scene.add(ring);
             }
 
-            const label = makeTextSprite(p.name, p.color);
+            const label = makeTextSprite(planet.name, planet.color);
             label.position.set(pos.x, pos.y + displayRadius + 2000, pos.z);
-            scene.add(label);
             label._offsetY = displayRadius + 2000;
             label._anchor = mesh.position;
-            dynamicLabels.push(label);
+            state.dynamicLabels.push(label);
+            state.scene.add(label);
 
-            // Orbit — only visible in solar system zoom
-            const orbitPts = ARTEMIS2.getPlanetOrbitPoints(i, T0, 256);
-            const vecs = orbitPts.map(pt => new THREE.Vector3(pt.x, pt.y, pt.z));
-            const orbitGeo = new THREE.BufferGeometry().setFromPoints(vecs);
-            const orbitMat = new THREE.LineDashedMaterial({
-                color: new THREE.Color(p.color),
-                dashSize: p.a * ARTEMIS2.AU * 0.02,
-                gapSize: p.a * ARTEMIS2.AU * 0.01,
-                transparent: true, opacity: 0.3
-            });
-            const orbitLine = new THREE.Line(orbitGeo, orbitMat);
+            const orbitLine = new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints(
+                    ARTEMIS.getPlanetOrbitPoints(i, T0, 256).map((pt) => new THREE.Vector3(pt.x, pt.y, pt.z))
+                ),
+                new THREE.LineDashedMaterial({
+                    color: new THREE.Color(planet.color),
+                    dashSize: planet.a * ARTEMIS.AU * 0.02,
+                    gapSize: planet.a * ARTEMIS.AU * 0.01,
+                    transparent: true,
+                    opacity: 0.3
+                })
+            );
             orbitLine.computeLineDistances();
             orbitLine.visible = false;
-            scene.add(orbitLine);
-            planetOrbits.push(orbitLine);
-            planetOrbitByIndex[i] = orbitLine;
+            state.planetOrbits[i] = orbitLine;
+            state.planetOrbitList.push(orbitLine);
+            state.scene.add(orbitLine);
         }
 
-        // Earth orbit — always visible (dash sizes updated per frame for readability)
-        const earthOrbitPts = ARTEMIS2.getPlanetOrbitPoints(2, T0, 256);
-        const earthVecs = earthOrbitPts.map(pt => new THREE.Vector3(pt.x, pt.y, pt.z));
-        const earthOrbitGeo = new THREE.BufferGeometry().setFromPoints(earthVecs);
-        const earthOrbitMat = new THREE.LineDashedMaterial({
-            color: 0x4499ff, dashSize: 400, gapSize: 220,
-            transparent: true, opacity: 0.35
-        });
-        earthOrbitLine = new THREE.Line(earthOrbitGeo, earthOrbitMat);
+        const earthOrbitLine = new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints(
+                ARTEMIS.getPlanetOrbitPoints(2, T0, 256).map((pt) => new THREE.Vector3(pt.x, pt.y, pt.z))
+            ),
+            new THREE.LineDashedMaterial({
+                color: 0x4499ff,
+                dashSize: 400,
+                gapSize: 220,
+                transparent: true,
+                opacity: 0.35
+            })
+        );
         earthOrbitLine.computeLineDistances();
-        scene.add(earthOrbitLine);
-        planetOrbitByIndex[2] = earthOrbitLine;
+        state.planetOrbits[2] = earthOrbitLine;
+        state.scene.add(earthOrbitLine);
     }
 
-    // ── Labels (sprite-based) ──
+    function createLabels() {
+        state.earthLabel = makeTextSprite('Erde', '#8cc3ff');
+        state.earthLabel.position.set(ARTEMIS.EARTH_RADIUS + 8, 0, 0);
+        state.scene.add(state.earthLabel);
+
+        state.moonLabel = makeTextSprite('Mond', '#e1e7f2');
+        state.scene.add(state.moonLabel);
+
+        state.orionLabel = makeTextSprite('Orion', '#18ffc0');
+        state.scene.add(state.orionLabel);
+    }
+
+    function createNorthPoleAxis() {
+        const axisLength = ARTEMIS.EARTH_RADIUS * 2.5;
+        const north = EARTH_POLE.clone().multiplyScalar(axisLength);
+        const south = EARTH_POLE.clone().multiplyScalar(-axisLength);
+        state.scene.add(new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints([south, north]),
+            new THREE.LineBasicMaterial({ color: 0xff4e4e, transparent: true, opacity: 0.6 })
+        ));
+    }
+
+    function createMoonOrbit() {
+        state.moonOrbitLine = new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints(
+                ARTEMIS.getMoonOrbitPoints(360).map((pt) => new THREE.Vector3(pt.x, pt.y, pt.z))
+            ),
+            new THREE.LineDashedMaterial({
+                color: 0xd8e4f0,
+                dashSize: 5,
+                gapSize: 3,
+                transparent: true,
+                opacity: 0.52
+            })
+        );
+        state.moonOrbitLine.computeLineDistances();
+        state.scene.add(state.moonOrbitLine);
+    }
+
+    function createArtemisObjects() {
+        state.orionMarker = new THREE.Mesh(
+            new THREE.SphereGeometry(1.5, 16, 16),
+            new THREE.MeshBasicMaterial({ color: 0x00ffaa })
+        );
+        state.scene.add(state.orionMarker);
+
+        state.orionGlow = new THREE.Mesh(
+            new THREE.SphereGeometry(3, 16, 16),
+            new THREE.MeshBasicMaterial({ color: 0x00ffaa, transparent: true, opacity: 0.25 })
+        );
+        state.scene.add(state.orionGlow);
+    }
+
+    function createTrajectoryLines() {
+        state.pastLine = new THREE.Line(
+            new THREE.BufferGeometry(),
+            new THREE.LineBasicMaterial({ color: 0x00ddff, transparent: true, opacity: 0.88 })
+        );
+        state.futureLine = new THREE.Line(
+            new THREE.BufferGeometry(),
+            new THREE.LineDashedMaterial({
+                color: 0xffffff,
+                dashSize: 3,
+                gapSize: 2,
+                transparent: true,
+                opacity: 0.35
+            })
+        );
+        state.scene.add(state.pastLine);
+        state.scene.add(state.futureLine);
+    }
+
     function makeTextSprite(text, color) {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        canvas.width = 256; canvas.height = 64;
-        ctx.font = 'bold 28px Segoe UI, Helvetica, sans-serif';
+        canvas.width = 256;
+        canvas.height = 64;
+        ctx.font = 'bold 28px Bahnschrift, Arial Narrow, Segoe UI';
         ctx.fillStyle = color;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(text, 128, 32);
-
-        const tex = new THREE.CanvasTexture(canvas);
-        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
-        const sprite = new THREE.Sprite(mat);
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: new THREE.CanvasTexture(canvas),
+            transparent: true,
+            depthTest: false
+        }));
         sprite.scale.set(20, 5, 1);
         return sprite;
     }
 
-    function createLabels() {
-        earthLabel = makeTextSprite('Erde', '#88bbff');
-        earthLabel.position.set(ARTEMIS2.EARTH_RADIUS + 5, 0, 0);
-        scene.add(earthLabel);
-
-        moonLabel = makeTextSprite('Mond', '#cccccc');
-        scene.add(moonLabel);
-
-        orionLabel = makeTextSprite('ORION', '#00ffaa');
-        scene.add(orionLabel);
+    function buildPickableList() {
+        state.pickableMeshes = [state.sunMesh, state.earthMesh, state.moonMesh];
+        Object.keys(state.planetMeshes).forEach((key) => {
+            state.pickableMeshes.push(state.planetMeshes[key]);
+        });
+        state.pickableMeshes.push(...state.extraPickableMeshes);
+        state.launchMarkers.forEach((marker) => {
+            state.pickableMeshes.push(marker.pickMesh);
+        });
     }
 
-    // ── North Pole axis (tilted by obliquity) ──
-    function createNorthPoleAxis() {
-        const axisLen = ARTEMIS2.EARTH_RADIUS * 2.5;
-        const north = EARTH_POLE.clone().multiplyScalar(axisLen);
-        const south = EARTH_POLE.clone().multiplyScalar(-axisLen);
-
-        const geo = new THREE.BufferGeometry().setFromPoints([south, north]);
-        const mat = new THREE.LineBasicMaterial({ color: 0xff4444, transparent: true, opacity: 0.6 });
-        scene.add(new THREE.Line(geo, mat));
-
-        const tipGeo = new THREE.SphereGeometry(0.5, 8, 8);
-        const tipMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
-        const tip = new THREE.Mesh(tipGeo, tipMat);
-        tip.position.copy(north);
-        scene.add(tip);
-
-        const nLabel = makeTextSprite('N', '#ff4444');
-        nLabel.position.copy(EARTH_POLE.clone().multiplyScalar(axisLen + 2.5));
-        nLabel.scale.set(10, 2.5, 1);
-        scene.add(nLabel);
-
-        const sLabel = makeTextSprite('S', '#ff4444');
-        sLabel.position.copy(EARTH_POLE.clone().multiplyScalar(-axisLen - 2.5));
-        sLabel.scale.set(10, 2.5, 1);
-        scene.add(sLabel);
+    function setFocusTarget(target) {
+        state.controls.target.copy(target);
     }
 
-    // ── Moon orbit line ──
-    function createMoonOrbit() {
-        const orbitPts = ARTEMIS2.getMoonOrbitPoints(360);
-        const vecs = orbitPts.map(p => new THREE.Vector3(p.x, p.y, p.z));
-        const geo = new THREE.BufferGeometry().setFromPoints(vecs);
-        const mat = new THREE.LineDashedMaterial({
-            color: 0xd8e4f0, dashSize: 5, gapSize: 3,
-            transparent: true, opacity: 0.52
+    function updateArtemisVisibility() {
+        const visible = state.artemisReplayEnabled;
+        [state.orionMarker, state.orionGlow, state.orionLabel, state.pastLine, state.futureLine].forEach((item) => {
+            if (item) item.visible = visible;
         });
-        moonOrbitLine = new THREE.Line(geo, mat);
-        moonOrbitLine.computeLineDistances();
-        scene.add(moonOrbitLine);
+        if (!visible) {
+            state.followOrion = false;
+            dom['follow-artemis']?.classList.remove('active');
+        }
+        refreshSceneModePill();
     }
 
-    // ── Trajectory lines ──
-    function createTrajectoryLines() {
-        const pastMat = new THREE.LineBasicMaterial({
-            color: 0x00ddff, linewidth: 2, transparent: true, opacity: 0.9
-        });
-        pastLine = new THREE.Line(new THREE.BufferGeometry(), pastMat);
-        scene.add(pastLine);
+    function refreshSceneModePill() {
+        if (!dom['scene-mode-pill']) return;
+        dom['scene-mode-pill'].textContent = state.artemisReplayEnabled
+            ? 'Replay-Modus: Artemis II im Raum aktiv'
+            : 'Home-Modus: Earth Launch Tracker';
+        dom['scene-mode-pill'].classList.toggle('status-live', state.artemisReplayEnabled);
+        if (dom['toggle-artemis-replay']) {
+            dom['toggle-artemis-replay'].textContent = state.artemisReplayEnabled
+                ? 'Replay im Raum an'
+                : 'Replay im Raum aus';
+            dom['toggle-artemis-replay'].classList.toggle('active', state.artemisReplayEnabled);
+        }
+    }
 
-        const futureMat = new THREE.LineDashedMaterial({
-            color: 0xffffff, linewidth: 1, dashSize: 3, gapSize: 2,
-            transparent: true, opacity: 0.35
+    function setArtemisReplayEnabled(enabled) {
+        state.artemisReplayEnabled = enabled;
+        if (enabled && !state.artemisReplayInitialized) {
+            state.artemisReplayInitialized = true;
+            jumpToMissionMet(0);
+        }
+        updateArtemisVisibility();
+    }
+
+    function formatLaunchCountdown(target) {
+        if (!target) return '--';
+        const diff = target.getTime() - Date.now();
+        if (diff <= 0) return 'Startfenster erreicht';
+        const sec = Math.floor(diff / 1000);
+        const days = Math.floor(sec / 86400);
+        const hours = Math.floor(sec / 3600) % 24;
+        const minutes = Math.floor(sec / 60) % 60;
+        const seconds = sec % 60;
+        const pad2 = (value) => String(value).padStart(2, '0');
+        if (days > 0) return `${days}d ${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+        return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+    }
+
+    function launchInstant(launch) {
+        const raw = launch?.net || launch?.window_start || launch?.windowStart;
+        if (!raw) return null;
+        const date = new Date(raw);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function launchLatitude(launch) {
+        const value = launch?.latitude ?? launch?.pad?.latitude;
+        const parsed = parseFloat(value);
+        return Number.isFinite(parsed) ? parsed : NaN;
+    }
+
+    function launchLongitude(launch) {
+        const value = launch?.longitude ?? launch?.pad?.longitude;
+        const parsed = parseFloat(value);
+        return Number.isFinite(parsed) ? parsed : NaN;
+    }
+
+    function isEarthLaunch(launch) {
+        const lat = launchLatitude(launch);
+        const lon = launchLongitude(launch);
+        return Number.isFinite(lat) && Number.isFinite(lon);
+    }
+
+    function launchOrganization(launch) {
+        if (typeof launch?.provider === 'string' && launch.provider.trim()) return launch.provider.trim();
+        const lsp = launch?.launch_service_provider;
+        if (lsp?.name) return String(lsp.name).trim();
+        const manufacturer = launch?.rocket?.configuration?.manufacturer;
+        if (manufacturer?.name) return String(manufacturer.name).trim();
+        return 'Unbekannt';
+    }
+
+    function launchKey(launch) {
+        return String(launch?.id || `${launch?.name || 'launch'}-${launch?.net || launch?.window_start || ''}`);
+    }
+
+    function launchPadLabel(launch) {
+        if (typeof launch?.pad === 'string' && launch.pad.trim()) {
+            return [launch.pad.trim(), launch.padLocation].filter(Boolean).join(' · ');
+        }
+        const pad = launch?.pad?.name || 'Unbekanntes Pad';
+        const location = launch?.pad?.location?.name || '';
+        return [pad, location].filter(Boolean).join(' · ');
+    }
+
+    function launchRocketName(launch) {
+        if (typeof launch?.rocket === 'string' && launch.rocket.trim()) return launch.rocket.trim();
+        return launch?.rocket?.configuration?.full_name ||
+            launch?.rocket?.configuration?.name ||
+            'Rakete unbekannt';
+    }
+
+    function launchStatusLabel(launch) {
+        if (launch?.statusName) return launch.statusName;
+        if (typeof launch?.status === 'string' && launch.status.trim()) return launch.status.trim();
+        return launch?.status?.name || 'Status unbekannt';
+    }
+
+    function launchStatusText(launch) {
+        return [
+            launch?.outcome,
+            typeof launch?.status === 'string' ? launch.status : '',
+            launch?.statusName,
+            launch?.statusAbbrev,
+            launch?.statusDescription,
+            launch?.status?.abbrev,
+            launch?.status?.name,
+            launch?.status?.description
+        ].filter(Boolean).join(' ').toLowerCase();
+    }
+
+    function classifyLaunchStatus(launch) {
+        const text = launchStatusText(launch);
+        if (!text) return 'scheduled';
+        if (/(success|successful)/.test(text)) return 'success';
+        if (/(partial failure|failure|failed|lost)/.test(text)) return 'failure';
+        if (/(cancel|cancelled|canceled|scrub|scrubbed)/.test(text)) return 'cancelled';
+        if (/(hold|delay|delayed|postponed|slip|tbc|tbd|to be confirmed|to be determined|unconfirmed)/.test(text)) return 'delayed';
+        if (/(in flight|flight|liftoff|lift-off|launch in progress)/.test(text)) return 'live';
+        if (/(go|confirmed|ready|on schedule)/.test(text)) return 'go';
+        return 'scheduled';
+    }
+
+    function launchCountdownStatusClass(launch) {
+        if (!launch) return '';
+        const status = classifyLaunchStatus(launch);
+        if (status === 'success') return 'status-success';
+        if (status === 'failure') return 'status-failure';
+        if (status === 'cancelled') return 'status-cancelled';
+        if (status === 'delayed') return 'status-delayed';
+        if (status === 'live') return 'status-go';
+
+        const when = launchInstant(launch);
+        if (when && when.getTime() - Date.now() <= LAUNCH_VERIFY_WINDOW_MS && launch?.preflightStatus === 'go') {
+            return 'status-go';
+        }
+        if (status === 'go' && when && when.getTime() - Date.now() <= LAUNCH_VERIFY_WINDOW_MS) {
+            return 'status-go';
+        }
+        return '';
+    }
+
+    function applyLaunchStatusClass(element, launch) {
+        if (!element) return;
+        ['status-go', 'status-delayed', 'status-cancelled', 'status-success', 'status-failure'].forEach((name) => {
+            element.classList.remove(name);
         });
-        futureLine = new THREE.Line(new THREE.BufferGeometry(), futureMat);
-        scene.add(futureLine);
+        const statusClass = launchCountdownStatusClass(launch);
+        if (statusClass) element.classList.add(statusClass);
+    }
+
+    function launchStatusBadge(launch) {
+        if (launch?.outcome) {
+            if (launch.outcome === 'success') return { text: 'Erfolgreich', className: 'status-success' };
+            if (launch.outcome === 'failure') return { text: 'Fehlgeschlagen', className: 'status-failure' };
+            if (launch.outcome === 'cancelled') return { text: 'Scrubbed / abgesagt', className: 'status-cancelled' };
+            if (launch.outcome === 'delayed') return { text: 'Verschoben', className: 'status-delayed' };
+            if (launch.outcome === 'go') return { text: 'Go bei T-15', className: 'status-go' };
+        }
+        const status = classifyLaunchStatus(launch);
+        if (status === 'success') return { text: 'Erfolgreich', className: 'status-success' };
+        if (status === 'failure') return { text: 'Fehlgeschlagen', className: 'status-failure' };
+        if (status === 'cancelled') return { text: 'Scrubbed / abgesagt', className: 'status-cancelled' };
+        if (status === 'delayed') return { text: 'Verschoben', className: 'status-delayed' };
+        if (status === 'live') return { text: 'Live', className: 'status-go' };
+        if (status === 'go') return { text: 'Go', className: 'status-go' };
+        return { text: launchStatusLabel(launch), className: '' };
+    }
+
+    function launchStory(launch) {
+        if (launch?.missionDescription) return launch.missionDescription;
+        if (typeof launch?.mission === 'string' && launch.mission.trim()) return launch.mission.trim();
+        return launch?.mission?.description ||
+            launch?.mission?.name ||
+            'Zu diesem Start liegt im Feed keine Missionsbeschreibung vor.';
+    }
+
+    function launchVideoCandidates(launch) {
+        const candidates = [];
+        const addUrl = (entry) => {
+            if (!entry) return;
+            if (typeof entry === 'string') {
+                candidates.push({ url: entry, title: 'Livestream' });
+                return;
+            }
+            if (entry.url) {
+                candidates.push({
+                    url: entry.url,
+                    title: entry.title || entry.description || entry.source || 'Livestream',
+                    featured: Boolean(entry.featured),
+                    priority: Number.isFinite(Number(entry.priority)) ? Number(entry.priority) : 999
+                });
+            }
+        };
+
+        addUrl(launch?.livestreamUrl);
+        if (Array.isArray(launch?.vidURLs)) launch.vidURLs.forEach(addUrl);
+        if (Array.isArray(launch?.vid_urls)) launch.vid_urls.forEach(addUrl);
+        if (Array.isArray(launch?.videos)) launch.videos.forEach(addUrl);
+
+        return candidates
+            .filter((entry) => /^https?:\/\//i.test(entry.url))
+            .sort((a, b) => {
+                const aYoutube = /youtu\.?be|youtube\.com/i.test(a.url) ? 0 : 1;
+                const bYoutube = /youtu\.?be|youtube\.com/i.test(b.url) ? 0 : 1;
+                if (aYoutube !== bYoutube) return aYoutube - bYoutube;
+                if (a.featured !== b.featured) return a.featured ? -1 : 1;
+                return a.priority - b.priority;
+            });
+    }
+
+    function launchLivestream(launch) {
+        return launchVideoCandidates(launch)[0] || null;
+    }
+
+    function youtubeEmbedUrl(url) {
+        try {
+            const parsed = new URL(url);
+            let id = '';
+            if (parsed.hostname.includes('youtu.be')) {
+                id = parsed.pathname.split('/').filter(Boolean)[0] || '';
+            } else if (parsed.pathname.startsWith('/watch')) {
+                id = parsed.searchParams.get('v') || '';
+            } else if (parsed.pathname.startsWith('/live/') || parsed.pathname.startsWith('/embed/')) {
+                id = parsed.pathname.split('/').filter(Boolean)[1] || '';
+            }
+            return id ? `https://www.youtube.com/embed/${encodeURIComponent(id)}?rel=0` : '';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function launchStreamSearchUrl(launch) {
+        const query = [
+            launch?.name,
+            launchRocketName(launch),
+            launchOrganization(launch),
+            'launch livestream'
+        ].filter(Boolean).join(' ');
+        return `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    }
+
+    function launchExternalUrl(launch) {
+        if (launch?.sourceUrl) return launch.sourceUrl;
+        if (launch?.livestreamUrl) return launch.livestreamUrl;
+        const firstVideo = Array.isArray(launch?.vidURLs) && launch.vidURLs.length > 0 ? launch.vidURLs[0]?.url : '';
+        const firstInfo = Array.isArray(launch?.infoURLs) && launch.infoURLs.length > 0 ? launch.infoURLs[0]?.url : '';
+        return firstVideo || firstInfo || launch?.url || '';
+    }
+
+    function formatCoordinates(launch) {
+        const lat = launchLatitude(launch);
+        const lon = launchLongitude(launch);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '--';
+        const latHemisphere = lat >= 0 ? 'N' : 'S';
+        const lonHemisphere = lon >= 0 ? 'E' : 'W';
+        return `${Math.abs(lat).toFixed(2)}° ${latHemisphere}, ${Math.abs(lon).toFixed(2)}° ${lonHemisphere}`;
+    }
+
+    function rememberLaunchesForMonitoring(items) {
+        const now = Date.now();
+        items.forEach((launch) => {
+            const when = launchInstant(launch);
+            if (!when) return;
+            state.launchWatchList.set(launchKey(launch), launch);
+        });
+
+        state.launchWatchList.forEach((launch, key) => {
+            const when = launchInstant(launch);
+            if (!when || now - when.getTime() > 6 * 60 * 60 * 1000) {
+                state.launchWatchList.delete(key);
+            }
+        });
+    }
+
+    function monitoredLaunches() {
+        const byId = new Map(state.launchWatchList);
+        state.launches.forEach((launch) => byId.set(launchKey(launch), launch));
+        return Array.from(byId.values()).sort((a, b) => {
+            const ta = launchInstant(a);
+            const tb = launchInstant(b);
+            if (!ta || !tb) return 0;
+            return ta - tb;
+        });
+    }
+
+    function launchIntelText(launch) {
+        if (!launch) return '--';
+        const when = launchInstant(launch);
+        const status = classifyLaunchStatus(launch);
+        if (status === 'cancelled') return 'Start abgesagt - Watch bleibt auf rot.';
+        if (status === 'delayed') return 'Start verzoegert oder noch nicht bestaetigt.';
+        if (status === 'failure') return 'Start fehlgeschlagen bestaetigt.';
+        if (status === 'success' || launch?.postflightStatus === 'success') return 'Start erfolgreich bestaetigt.';
+        if (launch?.preflightStatus === 'go' || status === 'live') return 'T-15 vom Worker bestaetigt - Timer ist live-gruen.';
+        if (!when) return 'Monitoring wartet auf eine gueltige Startzeit.';
+
+        const diff = when.getTime() - Date.now();
+        if (diff > LAUNCH_VERIFY_WINDOW_MS) return 'Worker hat T-15 Check vorgemerkt.';
+        if (diff > 0) return launch?.preflightCheckedAt ? 'Preflight-Status aus Worker-Daten geladen.' : 'Worker prueft den T-15 Status.';
+        if (diff > -LAUNCH_SUCCESS_CHECK_DELAY_MS) return 'Startfenster erreicht - Worker prueft T+30.';
+        return launch?.postflightCheckedAt ? 'Postflight-Status aus Worker-Daten geladen.' : 'Worker holt den T+30 Check nach.';
+    }
+
+    function updateLaunchStreamUi(launch) {
+        const card = dom['watch-launch-stream'];
+        if (!card) return;
+        const stream = launch ? launchLivestream(launch) : null;
+        const when = launchInstant(launch);
+        const diff = when ? when.getTime() - Date.now() : Number.POSITIVE_INFINITY;
+        const nearLiveWindow = when && diff <= LAUNCH_VERIFY_WINDOW_MS && diff > -2 * 60 * 60 * 1000;
+        const frame = dom['watch-launch-stream-frame'];
+        const link = dom['watch-launch-stream-link'];
+        const stateLabel = dom['watch-launch-stream-state'];
+        const streamUrl = stream?.url || '';
+        const embedUrl = streamUrl ? youtubeEmbedUrl(streamUrl) : '';
+        const mode = stream ? 'stream' : nearLiveWindow ? 'search' : 'hidden';
+        const uiKey = `${launch ? launchKey(launch) : 'none'}|${mode}|${streamUrl}|${embedUrl}`;
+
+        card.classList.toggle('is-hidden', !stream && !nearLiveWindow);
+        if (!stream && !nearLiveWindow) {
+            if (state.launchStreamUiKey !== uiKey && frame) frame.src = 'about:blank';
+            state.launchStreamUiKey = uiKey;
+            return;
+        }
+
+        if (state.launchStreamUiKey === uiKey) return;
+        state.launchStreamUiKey = uiKey;
+
+        const searchUrl = launch ? launchStreamSearchUrl(launch) : '#';
+        if (stream) {
+            if (stateLabel) stateLabel.textContent = stream.title || 'Offizieller Stream gefunden.';
+            if (link) {
+                link.href = streamUrl;
+                link.textContent = 'Livestream oeffnen';
+                link.classList.remove('is-hidden');
+            }
+            if (frame) {
+                if (frame.src !== (embedUrl || 'about:blank')) frame.src = embedUrl || 'about:blank';
+                frame.title = stream.title || 'Launch Livestream';
+                frame.classList.toggle('is-hidden', !embedUrl);
+            }
+        } else {
+            if (stateLabel) stateLabel.textContent = 'Noch kein offizieller Stream im Feed - Suche vorbereitet.';
+            if (link) {
+                link.href = searchUrl;
+                link.textContent = 'Auf YouTube suchen';
+                link.classList.remove('is-hidden');
+            }
+            if (frame) {
+                if (frame.src !== 'about:blank') frame.src = 'about:blank';
+                frame.classList.add('is-hidden');
+            }
+        }
+    }
+
+    function periodBounds(now, period) {
+        const start = new Date(now);
+        start.setHours(0, 0, 0, 0);
+        if (period === 'week') {
+            const mondayOffset = (start.getDay() + 6) % 7;
+            start.setDate(start.getDate() - mondayOffset);
+            const previousStart = new Date(start);
+            previousStart.setDate(previousStart.getDate() - 7);
+            return { currentStart: start, previousStart, previousEnd: new Date(start) };
+        }
+        if (period === 'month') {
+            start.setDate(1);
+            const previousStart = new Date(start);
+            previousStart.setMonth(previousStart.getMonth() - 1);
+            return { currentStart: start, previousStart, previousEnd: new Date(start) };
+        }
+        start.setMonth(0, 1);
+        const previousStart = new Date(start);
+        previousStart.setFullYear(previousStart.getFullYear() - 1);
+        return { currentStart: start, previousStart, previousEnd: new Date(start) };
+    }
+
+    function isSuccessfulLaunch(launch) {
+        if (launch?.outcome) return launch.outcome === 'success';
+        return classifyLaunchStatus(launch) === 'success';
+    }
+
+    function countSuccessfulLaunches(items, start, end) {
+        return items.filter((launch) => {
+            const when = launchInstant(launch);
+            return when && when >= start && when < end && isSuccessfulLaunch(launch);
+        }).length;
+    }
+
+    function launchSuccessStatsFromItems(items, date = new Date()) {
+        const oldest = items.reduce((current, launch) => {
+            const when = launchInstant(launch);
+            if (!when) return current;
+            return !current || when < current ? when : current;
+        }, null);
+        const makeStats = (period) => {
+            const bounds = periodBounds(date, period);
+            const coversPrevious = oldest && oldest <= bounds.previousStart;
+            return {
+                current: countSuccessfulLaunches(items, bounds.currentStart, date),
+                previous: coversPrevious ? countSuccessfulLaunches(items, bounds.previousStart, bounds.previousEnd) : null
+            };
+        };
+        return {
+            week: makeStats('week'),
+            month: makeStats('month'),
+            year: makeStats('year')
+        };
+    }
+
+    function formatLaunchDelta(current, previous, label) {
+        if (!Number.isFinite(previous)) return { text: `${label} --`, className: 'even' };
+        const diff = current - previous;
+        if (diff > 0) return { text: `+${diff} vs ${label}`, className: 'up' };
+        if (diff < 0) return { text: `${diff} vs ${label}`, className: 'down' };
+        return { text: `gleich vs ${label}`, className: 'even' };
+    }
+
+    function setStatDelta(id, delta) {
+        const element = dom[id];
+        if (!element) return;
+        element.textContent = delta.text;
+        element.classList.remove('up', 'down', 'even');
+        element.classList.add(delta.className);
+    }
+
+    function updateLaunchSuccessStatsUi() {
+        const stats = state.launchSuccessStats;
+        if (!stats) {
+            ['week', 'month', 'year'].forEach((period) => {
+                const value = dom[`launch-stat-success-${period}`];
+                const delta = dom[`launch-stat-success-${period}-delta`];
+                if (value) value.textContent = '--';
+                if (delta) delta.textContent = '--';
+            });
+            return;
+        }
+
+        dom['launch-stat-success-week'].textContent = String(stats.week.current);
+        dom['launch-stat-success-month'].textContent = String(stats.month.current);
+        dom['launch-stat-success-year'].textContent = String(stats.year.current);
+        setStatDelta('launch-stat-success-week-delta', formatLaunchDelta(stats.week.current, stats.week.previous, 'Vorwoche'));
+        setStatDelta('launch-stat-success-month-delta', formatLaunchDelta(stats.month.current, stats.month.previous, 'Vormonat'));
+        setStatDelta('launch-stat-success-year-delta', formatLaunchDelta(stats.year.current, stats.year.previous, 'Vorjahr'));
+    }
+
+    function updateLaunchFeedModeUi() {
+        dom['launch-feed-upcoming']?.setAttribute('aria-pressed', String(state.launchFeedMode === 'upcoming'));
+        dom['launch-feed-history']?.setAttribute('aria-pressed', String(state.launchFeedMode === 'history'));
+    }
+
+    function setLaunchFeedStatus(text) {
+        if (dom['launch-feed-status']) dom['launch-feed-status'].textContent = text;
+    }
+
+    function renderLaunchHistory(items) {
+        if (!dom['launch-feed-items'] || state.launchFeedMode !== 'history') return;
+        dom['launch-feed-items'].innerHTML = '';
+
+        if (!items.length && state.launchHistoryLoading) {
+            const loading = document.createElement('div');
+            loading.className = 'launch-empty';
+            loading.textContent = 'Lade Starthistorie ...';
+            dom['launch-feed-items'].appendChild(loading);
+            return;
+        }
+
+        if (!items.length) {
+            const empty = document.createElement('div');
+            empty.className = 'launch-empty';
+            empty.textContent = state.launchHistoryError || 'Noch keine historischen Starts geladen.';
+            dom['launch-feed-items'].appendChild(empty);
+            return;
+        }
+
+        items.forEach((launch) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'launch-item launch-history-item';
+            item.dataset.launchId = launchKey(launch);
+
+            const title = document.createElement('div');
+            title.className = 'launch-title';
+            title.textContent = launch.name || 'Unbenannter Start';
+
+            const meta = document.createElement('div');
+            meta.className = 'launch-provider';
+            meta.textContent = launch.provider || launchOrganization(launch);
+
+            const rocket = document.createElement('div');
+            rocket.className = 'launch-rocket';
+            rocket.textContent = launch.rocket || launchRocketName(launch);
+
+            const pad = document.createElement('div');
+            pad.className = 'launch-pad';
+            pad.textContent = launch.pad || launchPadLabel(launch);
+
+            const when = document.createElement('div');
+            when.className = 'launch-net';
+            const launchDate = launchInstant(launch);
+            when.textContent = launchDate ? localShortDateTime.format(launchDate) : '--';
+
+            const badgeData = launchStatusBadge(launch);
+            const badge = document.createElement('div');
+            badge.className = 'launch-history-status';
+            if (badgeData.className) badge.classList.add(badgeData.className);
+            badge.textContent = badgeData.text;
+
+            item.append(title, meta, rocket, pad, when, badge);
+            item.addEventListener('click', () => {
+                state.launchWatchList.set(launchKey(launch), launch);
+                selectLaunch(launchKey(launch), false);
+            });
+            dom['launch-feed-items'].appendChild(item);
+        });
+
+        if (state.launchHistoryLoading || !state.launchHistoryDone) {
+            const footer = document.createElement('div');
+            footer.className = 'launch-history-footer';
+            footer.textContent = state.launchHistoryLoading ? 'Laedt weitere Historie ...' : 'Weiter scrollen fuer aeltere Starts';
+            dom['launch-feed-items'].appendChild(footer);
+        }
+    }
+
+    function updateLaunchHistoryStatus() {
+        if (state.launchFeedMode !== 'history') return;
+        if (state.launchHistoryError) {
+            setLaunchFeedStatus(`Starthistorie wartet (${state.launchHistoryError})`);
+            return;
+        }
+        setLaunchFeedStatus(`Worker-Historie · ${state.launchHistoryItems.length} beobachtete Starts`);
+    }
+
+    async function fetchLaunchHistoryPage() {
+        state.launchHistoryLoading = true;
+        state.launchHistoryError = '';
+        renderLaunchHistory(state.launchHistoryItems);
+        try {
+            const payload = await fetchStaticJson(LAUNCH_DB_DATA_URL);
+            const items = Array.isArray(payload?.launches) ? payload.launches : [];
+            state.launchHistoryItems = items
+                .filter((launch) => {
+                    const when = launchInstant(launch);
+                    return launch?.outcome || (when && when.getTime() <= Date.now());
+                })
+                .sort((a, b) => {
+                    const ta = launchInstant(a);
+                    const tb = launchInstant(b);
+                    if (!ta || !tb) return 0;
+                    return tb - ta;
+                });
+            state.launchHistoryNextUrl = '';
+            state.launchHistoryDone = true;
+            state.launchHistoryError = '';
+        } catch (error) {
+            state.launchHistoryError = error?.message || 'Statische Historie nicht erreichbar';
+        } finally {
+            state.launchHistoryLoading = false;
+            updateLaunchHistoryStatus();
+            renderLaunchHistory(state.launchHistoryItems);
+        }
+    }
+
+    function renderActiveLaunchFeed() {
+        updateLaunchFeedModeUi();
+        if (state.launchFeedMode === 'history') {
+            renderLaunchHistory(state.launchHistoryItems);
+            updateLaunchHistoryStatus();
+        } else {
+            renderLaunchFeed(state.launches);
+        }
+    }
+
+    function setLaunchFeedMode(mode) {
+        if (state.launchFeedMode === mode) return;
+        state.launchFeedMode = mode;
+        renderActiveLaunchFeed();
+        if (mode === 'history' && !state.launchHistoryItems.length) {
+            fetchLaunchHistoryPage(true);
+        } else if (mode === 'upcoming') {
+            setLaunchFeedStatus(state.launches.length
+                ? `Worker-Daten · ${dataAgeLabel(state.launchDataGeneratedAt)} · ${state.launches.length} Starts`
+                : 'Lade Startdaten ...');
+        }
+    }
+
+    function handleLaunchFeedScroll() {
+        // History is a complete static snapshot; no paginated API is used in the browser.
+    }
+
+    function renderLaunchFeed(items) {
+        if (state.launchFeedMode !== 'upcoming') return;
+        if (!dom['launch-feed-items']) return;
+        dom['launch-feed-items'].innerHTML = '';
+        if (!items.length) {
+            const empty = document.createElement('div');
+            empty.className = 'launch-empty';
+            empty.textContent = 'Keine anstehenden Earth-Launches mit Koordinaten gefunden.';
+            dom['launch-feed-items'].appendChild(empty);
+            return;
+        }
+
+        items.forEach((launch) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'launch-item';
+            item.dataset.launchId = launchKey(launch);
+
+            const title = document.createElement('div');
+            title.className = 'launch-title';
+            title.textContent = launch.name || 'Unbenannter Start';
+
+            const provider = document.createElement('div');
+            provider.className = 'launch-provider';
+            provider.textContent = launchOrganization(launch);
+
+            const rocket = document.createElement('div');
+            rocket.className = 'launch-rocket';
+            rocket.textContent = launchRocketName(launch);
+
+            const pad = document.createElement('div');
+            pad.className = 'launch-pad';
+            pad.textContent = launchPadLabel(launch);
+
+            const net = document.createElement('div');
+            net.className = 'launch-net';
+            const launchDate = launchInstant(launch);
+            net.textContent = launchDate ? localShortDateTime.format(launchDate) : '--';
+
+            const countdown = document.createElement('div');
+            countdown.className = 'launch-countdown';
+            countdown.dataset.launchId = launchKey(launch);
+            countdown.dataset.net = launchDate?.toISOString() || '';
+            countdown.textContent = formatLaunchCountdown(launchDate);
+            applyLaunchStatusClass(countdown, launch);
+
+            item.append(title, provider, rocket, pad, net, countdown);
+            item.addEventListener('click', () => {
+                selectLaunch(launchKey(launch), true);
+            });
+            dom['launch-feed-items'].appendChild(item);
+        });
+
+        refreshSelectedLaunchUi();
+    }
+
+    function updateOverviewStats() {
+        if (!state.launches.length) {
+            dom['launch-stat-total'].textContent = '--';
+            dom['launch-stat-countdown'].textContent = '--';
+            dom['launch-stat-orgs'].textContent = '--';
+            dom['launch-stat-pads'].textContent = '--';
+            updateLaunchSuccessStatsUi();
+            updateSatelliteStats();
+            return;
+        }
+
+        const nextLaunch = state.launches[0];
+        const providers = new Set(state.launches.map((launch) => launchOrganization(launch)));
+        const pads = new Set(state.launches.map((launch) => launchPadLabel(launch)));
+        dom['launch-stat-total'].textContent = String(state.launches.length);
+        dom['launch-stat-countdown'].textContent = formatLaunchCountdown(launchInstant(nextLaunch));
+        dom['launch-stat-orgs'].textContent = String(providers.size);
+        dom['launch-stat-pads'].textContent = String(pads.size);
+        updateLaunchSuccessStatsUi();
+        updateSatelliteStats();
+    }
+
+    function getSelectedLaunch() {
+        if (state.selectedLaunchId && state.launchWatchList.has(state.selectedLaunchId)) {
+            return state.launches.find((launch) => launchKey(launch) === state.selectedLaunchId) ||
+                state.launchWatchList.get(state.selectedLaunchId);
+        }
+        if (state.launches.length) return state.launches[0];
+        return monitoredLaunches()[0] || null;
+    }
+
+    function refreshSelectedLaunchUi() {
+        const launch = getSelectedLaunch();
+        document.querySelectorAll('.launch-item[data-launch-id]').forEach((item) => {
+            item.classList.toggle('active', item.dataset.launchId === state.selectedLaunchId);
+        });
+        state.launchMarkers.forEach((marker, key) => {
+            marker.group.userData.active = key === state.selectedLaunchId;
+        });
+        if (!launch) {
+            updateLaunchStreamUi(null);
+            return;
+        }
+
+        const when = launchInstant(launch);
+        dom['watch-launch-title'].textContent = launch.name || 'Unbenannter Start';
+        dom['watch-launch-subtitle'].textContent =
+            launch?.padLocation ||
+            launch?.orbit ||
+            launch?.pad?.location?.name ||
+            launch?.mission?.orbit?.name ||
+            launchStatusLabel(launch);
+        dom['watch-launch-provider'].textContent = launchOrganization(launch);
+        dom['watch-launch-rocket'].textContent = launchRocketName(launch);
+        dom['watch-launch-status'].textContent = launchStatusLabel(launch);
+        dom['watch-launch-countdown'].textContent = formatLaunchCountdown(when);
+        applyLaunchStatusClass(dom['watch-launch-status'], launch);
+        applyLaunchStatusClass(dom['watch-launch-countdown'], launch);
+        dom['watch-launch-pad'].textContent = launchPadLabel(launch);
+        dom['watch-launch-window'].textContent = when ? localShortDateTime.format(when) : '--';
+        dom['watch-launch-coords'].textContent = formatCoordinates(launch);
+        dom['watch-launch-story'].textContent = launchStory(launch);
+        if (dom['watch-launch-intel']) dom['watch-launch-intel'].textContent = launchIntelText(launch);
+        updateLaunchStreamUi(launch);
+
+        const externalUrl = launchExternalUrl(launch);
+        if (externalUrl) {
+            dom['watch-launch-link'].href = externalUrl;
+            dom['watch-launch-link'].classList.remove('is-hidden');
+        } else {
+            dom['watch-launch-link'].href = '#';
+            dom['watch-launch-link'].classList.add('is-hidden');
+        }
+    }
+
+    function selectLaunch(launchId, focus) {
+        state.selectedLaunchId = launchId;
+        refreshSelectedLaunchUi();
+        if (focus) focusSelectedLaunch();
+    }
+
+    async function fetchLaunchSuccessStats(force = false) {
+        const now = Date.now();
+        if (!force && state.launchSuccessStats && now - state.launchSuccessStatsFetchedAt < LAUNCH_DATA_REFRESH_MS) {
+            updateLaunchSuccessStatsUi();
+            return;
+        }
+
+        try {
+            const payload = await fetchStaticJson(LAUNCH_STATS_DATA_URL);
+            state.launchSuccessStats = {
+                week: payload?.week || { current: 0, previous: null },
+                month: payload?.month || { current: 0, previous: null },
+                year: payload?.year || { current: 0, previous: null }
+            };
+            state.launchSuccessStatsFetchedAt = now;
+        } catch (error) {
+            if (!state.launchSuccessStats) {
+                state.launchSuccessStats = launchSuccessStatsFromItems(state.launchHistoryItems);
+                state.launchSuccessStatsFetchedAt = now;
+            }
+        } finally {
+            updateLaunchSuccessStatsUi();
+        }
+    }
+
+    async function fetchLaunches() {
+        if (state.launchFeedMode === 'upcoming') setLaunchFeedStatus('Lade Startdaten ...');
+
+        try {
+            const payload = await fetchStaticJson(LAUNCH_FEED_DATA_URL);
+            const launches = (Array.isArray(payload?.launches) ? payload.launches : [])
+                .filter(isEarthLaunch)
+                .sort((a, b) => {
+                    const ta = launchInstant(a);
+                    const tb = launchInstant(b);
+                    if (!ta || !tb) return 0;
+                    return ta - tb;
+                })
+                .slice(0, 24);
+
+            state.launches = launches;
+            state.launchDataGeneratedAt = payload?.generatedAt || '';
+            state.launchDataSource = payload?.source || '';
+            rememberLaunchesForMonitoring(state.launches);
+            if (!state.selectedLaunchId || !state.launches.some((launch) => launchKey(launch) === state.selectedLaunchId)) {
+                state.selectedLaunchId = state.launches[0] ? launchKey(state.launches[0]) : null;
+            }
+
+            renderLaunchFeed(state.launches);
+            updateOverviewStats();
+            rebuildLaunchMarkers();
+
+            if (state.launchFeedMode === 'upcoming') {
+                setLaunchFeedStatus(`Worker-Daten · ${dataAgeLabel(state.launchDataGeneratedAt)} · ${state.launches.length} Starts`);
+            }
+        } catch (error) {
+            state.launches = [];
+            rememberLaunchesForMonitoring([]);
+            renderLaunchFeed([]);
+            updateOverviewStats();
+            rebuildLaunchMarkers();
+            if (state.launchFeedMode === 'upcoming') {
+                setLaunchFeedStatus(`Statische Startdaten nicht erreichbar${error?.message ? ` (${error.message})` : '.'}`);
+            }
+        }
+    }
+    function tickLaunchCountdowns() {
+        document.querySelectorAll('.launch-countdown[data-net]').forEach((element) => {
+            const iso = element.getAttribute('data-net');
+            if (!iso) return;
+            const launch = state.launches.find((item) => launchKey(item) === element.dataset.launchId);
+            element.textContent = formatLaunchCountdown(new Date(iso));
+            applyLaunchStatusClass(element, launch);
+        });
+        updateOverviewStats();
+        refreshSelectedLaunchUi();
+    }
+
+    function initLaunchFeed() {
+        dom['launch-feed-refresh']?.addEventListener('click', () => {
+            if (state.launchFeedMode === 'history') {
+                fetchLaunchHistoryPage(true);
+            } else {
+                fetchLaunches();
+            }
+        });
+        dom['launch-feed-upcoming']?.addEventListener('click', () => setLaunchFeedMode('upcoming'));
+        dom['launch-feed-history']?.addEventListener('click', () => setLaunchFeedMode('history'));
+        dom['launch-feed-items']?.addEventListener('scroll', handleLaunchFeedScroll);
+        updateLaunchFeedModeUi();
+        fetchLaunches();
+        fetchLaunchHistoryPage();
+        fetchLaunchSuccessStats();
+        if (state.launchFeedFetchTimer) clearInterval(state.launchFeedFetchTimer);
+        if (state.launchCountdownTimer) clearInterval(state.launchCountdownTimer);
+        if (state.launchHistoryFetchTimer) clearInterval(state.launchHistoryFetchTimer);
+        state.launchFeedFetchTimer = setInterval(fetchLaunches, LAUNCH_DATA_REFRESH_MS);
+        state.launchCountdownTimer = setInterval(tickLaunchCountdowns, 1000);
+        state.launchHistoryFetchTimer = setInterval(() => {
+            fetchLaunchHistoryPage();
+            fetchLaunchSuccessStats(true);
+        }, LAUNCH_DATA_REFRESH_MS);
+    }
+
+    function latLonToVector3(lat, lon, radius) {
+        const phi = THREE.MathUtils.degToRad(90 - lat);
+        const theta = THREE.MathUtils.degToRad(lon + 180);
+        return new THREE.Vector3(
+            -radius * Math.sin(phi) * Math.cos(theta),
+            radius * Math.cos(phi),
+            radius * Math.sin(phi) * Math.sin(theta)
+        );
+    }
+
+    function updateObserverMarker() {
+        if (!state.observerMarker) return;
+        const location = state.observerLocation;
+        if (!location) {
+            state.observerMarker.visible = false;
+            return;
+        }
+
+        const anchor = latLonToVector3(location.lat, location.lon, ARTEMIS.EARTH_RADIUS + 0.02);
+        const normal = anchor.clone().normalize();
+        state.observerMarker.visible = true;
+        state.observerMarker.position.copy(anchor);
+        state.observerMarker.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+    }
+
+    function initObserverLocation() {
+        if (!('geolocation' in navigator)) return;
+
+        const onSuccess = (position) => {
+            state.observerLocation = {
+                lat: position.coords.latitude,
+                lon: position.coords.longitude,
+                accuracy: position.coords.accuracy
+            };
+            updateObserverMarker();
+        };
+
+        navigator.geolocation.getCurrentPosition(onSuccess, () => { /* optional */ }, {
+            enableHighAccuracy: true,
+            maximumAge: 60000,
+            timeout: 12000
+        });
+
+        state.observerWatchId = navigator.geolocation.watchPosition(onSuccess, () => { /* optional */ }, {
+            enableHighAccuracy: true,
+            maximumAge: 30000,
+            timeout: 15000
+        });
+    }
+
+    function getOrbitElementsFromSatrec(satrec) {
+        const eccentricity = Number.isFinite(satrec?.ecco) ? Math.max(0, satrec.ecco) : 0;
+        const inclinationDeg = Number.isFinite(satrec?.inclo) ? THREE.MathUtils.radToDeg(satrec.inclo) : 0;
+        const meanMotionRadPerMinute = Number.isFinite(satrec?.no_kozai)
+            ? satrec.no_kozai
+            : Number.isFinite(satrec?.no)
+                ? satrec.no
+                : NaN;
+
+        if (!Number.isFinite(meanMotionRadPerMinute) || meanMotionRadPerMinute <= 0) {
+            return {
+                eccentricity,
+                inclinationDeg,
+                semiMajorAxisKm: NaN,
+                periodMinutes: NaN,
+                perigeeKm: NaN,
+                apogeeKm: NaN
+            };
+        }
+
+        const meanMotionRadPerSecond = meanMotionRadPerMinute / 60;
+        const semiMajorAxisKm = Math.cbrt(EARTH_MU_KM3_S2 / (meanMotionRadPerSecond * meanMotionRadPerSecond));
+        const periodMinutes = (Math.PI * 2) / meanMotionRadPerMinute;
+        return {
+            eccentricity,
+            inclinationDeg,
+            semiMajorAxisKm,
+            periodMinutes,
+            perigeeKm: semiMajorAxisKm * (1 - eccentricity) - WGS84_EARTH_RADIUS_KM,
+            apogeeKm: semiMajorAxisKm * (1 + eccentricity) - WGS84_EARTH_RADIUS_KM
+        };
+    }
+
+    function classifyOrbitRegime(orbit, fallbackAltitudeKm = NaN) {
+        const eccentricity = Number.isFinite(orbit?.eccentricity) ? orbit.eccentricity : 0;
+        const perigeeKm = Number.isFinite(orbit?.perigeeKm) ? orbit.perigeeKm : fallbackAltitudeKm;
+        const apogeeKm = Number.isFinite(orbit?.apogeeKm) ? orbit.apogeeKm : fallbackAltitudeKm;
+        const meanAltitudeKm = Number.isFinite(perigeeKm) && Number.isFinite(apogeeKm)
+            ? (perigeeKm + apogeeKm) / 2
+            : fallbackAltitudeKm;
+        const periodMinutes = Number.isFinite(orbit?.periodMinutes) ? orbit.periodMinutes : NaN;
+        const isGeosynchronous =
+            Math.abs(meanAltitudeKm - GEOSTATIONARY_ALTITUDE_KM) <= 1800 &&
+            Math.abs(periodMinutes - SIDEREAL_DAY_MINUTES) <= 120 &&
+            eccentricity < 0.08;
+
+        if (isGeosynchronous) return 'GEO';
+        if (eccentricity >= 0.25 && Number.isFinite(apogeeKm) && apogeeKm >= 2000) return 'HEO';
+        if (Number.isFinite(apogeeKm) && apogeeKm < 2000) return 'LEO';
+        if (Number.isFinite(meanAltitudeKm) && meanAltitudeKm < GEOSTATIONARY_ALTITUDE_KM) return 'MEO';
+        return 'HEO';
+    }
+
+    function orbitRegimeActive(regime) {
+        return Boolean(state.satelliteFilters[regime]);
+    }
+
+    function estimateSatelliteOrbitTotal() {
+        return Math.max(SATELLITES_IN_ORBIT_ESTIMATE, state.satelliteCatalog.length + 1);
+    }
+
+    function updateSatelliteSearchStatus() {
+        if (!dom['satellite-search-status']) return;
+        if (!state.satelliteLibraryReady) {
+            dom['satellite-search-status'].textContent = state.satelliteLastError || 'Die Satellitenbibliothek konnte nicht geladen werden.';
+            return;
+        }
+        if (!state.satelliteCatalogLoaded) {
+            dom['satellite-search-status'].textContent = state.satelliteLastError || 'Lade Satellitenkatalog ...';
+            return;
+        }
+
+        if (state.satelliteLastError) {
+            dom['satellite-search-status'].textContent = state.satelliteLastError;
+            return;
+        }
+
+        const enabled = ORBIT_REGIMES.filter((regime) => orbitRegimeActive(regime)).join(', ') || 'keine';
+        dom['satellite-search-status'].textContent =
+            `${estimateSatelliteOrbitTotal().toLocaleString('de-DE')} im Orbit geschaetzt · ${state.satelliteCatalog.length.toLocaleString('de-DE')} oeffentlich trackbar · ${state.satelliteLiveCount.toLocaleString('de-DE')} live sichtbar · Filter: ${enabled}`;
+    }
+
+    function formatAltitudeKm(value) {
+        if (!Number.isFinite(value)) return '--';
+        return `${Math.round(value).toLocaleString('de-DE')} km`;
+    }
+
+    function formatSatelliteNumber(value, fractionDigits = 0, suffix = '') {
+        if (!Number.isFinite(value)) return '--';
+        return `${value.toLocaleString('de-DE', {
+            minimumFractionDigits: fractionDigits,
+            maximumFractionDigits: fractionDigits
+        })}${suffix}`;
+    }
+
+    function formatSatellitePeriod(minutes) {
+        if (!Number.isFinite(minutes)) return '--';
+        if (minutes >= 180) return `${formatSatelliteNumber(minutes / 60, 1)} h`;
+        return `${formatSatelliteNumber(minutes, 0)} min`;
+    }
+
+    function formatCoordinate(value, positive, negative) {
+        if (!Number.isFinite(value)) return '--';
+        const hemisphere = value >= 0 ? positive : negative;
+        return `${Math.abs(value).toFixed(2).replace('.', ',')}° ${hemisphere}`;
+    }
+
+    function setText(id, value) {
+        if (dom[id]) dom[id].textContent = value;
+    }
+
+    function currentSatelliteSearchResults() {
+        if (!state.satelliteCatalogLoaded) return [];
+        const query = state.satelliteSearchQuery.trim().toLowerCase();
+        const catalog = state.satelliteCatalog.filter((satellite) => {
+            if (!orbitRegimeActive(satellite.regime)) return false;
+            if (!query) return true;
+            return satellite.name.toLowerCase().includes(query) ||
+                String(satellite.id).includes(query);
+        });
+
+        return catalog
+            .sort((a, b) => {
+                const aScore = a.name.toLowerCase() === query ? 2 : a.name.toLowerCase().startsWith(query) ? 1 : 0;
+                const bScore = b.name.toLowerCase() === query ? 2 : b.name.toLowerCase().startsWith(query) ? 1 : 0;
+                if (aScore !== bScore) return bScore - aScore;
+                return a.name.localeCompare(b.name, 'de');
+            })
+            .slice(0, SATELLITE_RESULT_LIMIT);
+    }
+
+    function renderSatelliteSearchResults() {
+        if (!dom['satellite-search-results']) return;
+        dom['satellite-search-results'].innerHTML = '';
+        updateSatelliteSearchStatus();
+
+        if (!state.satelliteCatalogLoaded) {
+            const empty = document.createElement('div');
+            empty.className = 'search-empty';
+            empty.textContent = 'Sobald der oeffentliche Satellitenkatalog geladen ist, erscheinen hier Treffer.';
+            dom['satellite-search-results'].appendChild(empty);
+            return;
+        }
+
+        const results = currentSatelliteSearchResults();
+        if (!results.length) {
+            const empty = document.createElement('div');
+            empty.className = 'search-empty';
+            empty.textContent = 'Kein oeffentlich trackbarer Satellit passt gerade zu deiner Suche.';
+            dom['satellite-search-results'].appendChild(empty);
+            return;
+        }
+
+        results.forEach((satellite) => {
+            const card = document.createElement('article');
+            card.className = 'sat-result-card';
+            if (state.followSatelliteId === satellite.id) card.classList.add('active');
+
+            const title = document.createElement('div');
+            title.className = 'sat-result-title';
+            title.textContent = satellite.name;
+
+            const meta = document.createElement('div');
+            meta.className = 'sat-result-meta';
+            meta.textContent = `${satellite.regime} · ${satellite.type || 'Satellit'} · Hoehe ${formatAltitudeKm(satellite.altitudeKm)} · NORAD ${satellite.id}`;
+
+            const actions = document.createElement('div');
+            actions.className = 'sat-result-actions';
+
+            const focusBtn = document.createElement('button');
+            focusBtn.type = 'button';
+            focusBtn.className = 'action-btn';
+            focusBtn.textContent = 'Fokus';
+            focusBtn.addEventListener('click', () => focusSatelliteById(satellite.id, false));
+
+            const followBtn = document.createElement('button');
+            followBtn.type = 'button';
+            followBtn.className = 'action-btn';
+            followBtn.textContent = state.followSatelliteId === satellite.id ? 'Verfolgung an' : 'Folgen';
+            if (state.followSatelliteId === satellite.id) followBtn.classList.add('active');
+            followBtn.addEventListener('click', () => focusSatelliteById(satellite.id, true));
+
+            actions.append(focusBtn, followBtn);
+            card.append(title, meta, actions);
+            dom['satellite-search-results'].appendChild(card);
+        });
+    }
+
+    function satelliteColorForName(name) {
+        if (/ISS|ZARYA|TIANGONG|CSS/i.test(name)) return new THREE.Color(0xffc768);
+        if (/^STARLINK/i.test(name)) return new THREE.Color(0x5fd8ff);
+        if (/^ONEWEB/i.test(name)) return new THREE.Color(0xc0b8ff);
+        if (/GPS|GALILEO|GLONASS|BEIDOU|NAVSTAR/i.test(name)) return new THREE.Color(0x7fffb2);
+        return new THREE.Color(0xe6f2ff);
+    }
+
+    function satelliteProfile(type, operator, country, source = 'Name erkannt') {
+        return { type, operator, country, profileSource: source };
+    }
+
+    function inferSatelliteProfile(name, regime) {
+        const n = name.toUpperCase();
+        const fallback = satelliteProfile(
+            regime === 'GEO' ? 'Satellit (GEO)' : 'Satellit',
+            'Nicht eindeutig',
+            'Nicht eindeutig',
+            'TLE ohne Betreiberfeld'
+        );
+
+        if (/\b(DEB|DEBRIS)\b/.test(n)) return satelliteProfile('Weltraumschrott', 'Kein aktiver Betreiber', 'Nicht eindeutig', 'TLE-Name');
+        if (/\b(R\/B|ROCKET BODY)\b/.test(n)) return satelliteProfile('Raketenkörper', 'Kein aktiver Betreiber', 'Nicht eindeutig', 'TLE-Name');
+        if (/OBJECT\s+[A-Z0-9]+/.test(n)) return satelliteProfile('Nicht katalogisierte Nutzlast/Objekt', 'Nicht eindeutig', 'Nicht eindeutig', 'TLE-Name');
+
+        const knownProfiles = [
+            [/ISS|ZARYA|UNITY|ZVEZDA|DESTINY|KIBO|COLUMBUS/, 'Raumstation/ISS-Modul', 'ISS-Partner (NASA, Roskosmos, ESA, JAXA, CSA)', 'International'],
+            [/TIANGONG|CSS|TIANHE|WENTIAN|MENGTIAN/, 'Raumstation/Stationsmodul', 'CMSA', 'China'],
+            [/TIANZHOU|SHENZHOU/, 'Raumschiff/Versorgung', 'CMSA', 'China'],
+            [/^STARLINK/, 'Kommunikationssatellit', 'SpaceX', 'USA'],
+            [/^ONEWEB/, 'Kommunikationssatellit', 'Eutelsat OneWeb', 'Vereinigtes Königreich/Frankreich'],
+            [/KUIPER/, 'Kommunikationssatellit', 'Amazon Project Kuiper', 'USA'],
+            [/IRIDIUM/, 'Kommunikationssatellit', 'Iridium Communications', 'USA'],
+            [/GLOBALSTAR/, 'Kommunikationssatellit', 'Globalstar', 'USA'],
+            [/ORBCOMM/, 'Kommunikationssatellit', 'ORBCOMM', 'USA'],
+            [/O3B|SES/, 'Kommunikationssatellit', 'SES', 'Luxemburg'],
+            [/INTELSAT|IS-\d|GALAXY\s?\d|HORIZONS/, 'Kommunikationssatellit', 'Intelsat', 'USA/Luxemburg'],
+            [/EUTELSAT|HOTBIRD|HOT BIRD|KONNECT/, 'Kommunikationssatellit', 'Eutelsat', 'Frankreich'],
+            [/INMARSAT|VIASAT/, 'Kommunikationssatellit', 'Viasat/Inmarsat', 'USA/Vereinigtes Königreich'],
+            [/TELSTAR|ANIK/, 'Kommunikationssatellit', 'Telesat', 'Kanada'],
+            [/HISPASAT|AMAZONAS/, 'Kommunikationssatellit', 'Hispasat', 'Spanien'],
+            [/TURKSAT/, 'Kommunikationssatellit', 'Turksat', 'Türkei'],
+            [/ARABSAT|BADR/, 'Kommunikationssatellit', 'Arabsat', 'Saudi-Arabien'],
+            [/NILESAT/, 'Kommunikationssatellit', 'Nilesat', 'Ägypten'],
+            [/ECHOSTAR|DISH/, 'Kommunikationssatellit', 'EchoStar/DISH', 'USA'],
+            [/TDRS/, 'Kommunikations-/Datenrelaissatellit', 'NASA', 'USA'],
+            [/SKYNET/, 'Militärischer Kommunikationssatellit', 'UK Ministry of Defence', 'Vereinigtes Königreich'],
+            [/GPS|NAVSTAR/, 'Navigationssatellit', 'U.S. Space Force', 'USA'],
+            [/GALILEO|GSAT01|GSAT02/, 'Navigationssatellit', 'EU/ESA/EUSPA', 'Europäische Union'],
+            [/GLONASS/, 'Navigationssatellit', 'Roskosmos/Russische Föderation', 'Russland'],
+            [/BEIDOU|COMPASS/, 'Navigationssatellit', 'CNSA/BeiDou System', 'China'],
+            [/QZSS|MICHIBIKI/, 'Navigationssatellit', 'Cabinet Office/JAXA', 'Japan'],
+            [/IRNSS|NAVIC/, 'Navigationssatellit', 'ISRO', 'Indien'],
+            [/GOES/, 'Wetter-/Umweltsatellit', 'NOAA/NASA', 'USA'],
+            [/NOAA\s?\d|JPSS|SUOMI NPP/, 'Wetter-/Umweltsatellit', 'NOAA/NASA', 'USA'],
+            [/METEOSAT|METOP|SENTINEL-6/, 'Wetter-/Umweltsatellit', 'EUMETSAT/ESA', 'Europa'],
+            [/HIMAWARI/, 'Wetter-/Umweltsatellit', 'JMA', 'Japan'],
+            [/FENGYUN|FY-/, 'Wetter-/Umweltsatellit', 'CMA/CNSA', 'China'],
+            [/LANDSAT/, 'Erdbeobachtung', 'NASA/USGS', 'USA'],
+            [/SENTINEL/, 'Erdbeobachtung', 'ESA/Copernicus', 'Europäische Union'],
+            [/SPOT|PLEIADES/, 'Erdbeobachtung', 'Airbus/CNES', 'Frankreich/Europa'],
+            [/WORLDVIEW|GEOEYE|LEGION/, 'Erdbeobachtung', 'Maxar', 'USA'],
+            [/PLANET|DOVE|FLOCK|SKYSAT/, 'Erdbeobachtung', 'Planet Labs', 'USA'],
+            [/ICEYE/, 'Radar-Erdbeobachtung', 'ICEYE', 'Finnland'],
+            [/CAPELLA/, 'Radar-Erdbeobachtung', 'Capella Space', 'USA'],
+            [/KOMPSAT|ARIRANG/, 'Erdbeobachtung', 'KARI', 'Südkorea'],
+            [/CARTOSAT|RISAT|OCEANSAT|RESOURCESAT|INSAT|GSAT/, 'Satellit (Kommunikation/Erdbeobachtung)', 'ISRO', 'Indien'],
+            [/HUBBLE|HST/, 'Weltraumteleskop', 'NASA/ESA', 'USA/Europa'],
+            [/CHANDRA|SWIFT|FERMI|TESS|WISE|NEOWISE/, 'Wissenschaftssatellit', 'NASA', 'USA'],
+            [/JWST|WEBB/, 'Weltraumteleskop', 'NASA/ESA/CSA', 'International'],
+            [/NROL|NOSS|USA\s?\d+/, 'Militär-/Aufklärungssatellit', 'US-Regierung/NRO/DoD', 'USA'],
+            [/COSMOS|KOSMOS/, 'Militär-/Regierungssatellit', 'Russische Regierung/Roskosmos', 'Russland'],
+            [/YAOGAN|SHIJIAN|SJ-/, 'Regierungs-/Aufklärungssatellit', 'CNSA/Chinesische Regierung', 'China'],
+            [/OFEQ/, 'Aufklärungssatellit', 'Israel Ministry of Defense', 'Israel'],
+            [/SAR-LUPE|TERRASAR|TANDEM-X/, 'Radar-Erdbeobachtung', 'DLR/Airbus/Bundeswehr', 'Deutschland'],
+            [/LEMUR/, 'Wetter-/AIS-Datensatellit', 'Spire Global', 'USA/Luxemburg'],
+            [/HAWK/, 'RF-Aufklärungssatellit', 'HawkEye 360', 'USA'],
+            [/SWARM/, 'IoT-Kommunikationssatellit', 'Swarm Technologies/SpaceX', 'USA']
+        ];
+
+        const match = knownProfiles.find(([pattern]) => pattern.test(n));
+        if (!match) return fallback;
+        return satelliteProfile(match[1], match[2], match[3], 'Aus Name abgeleitet');
+    }
+
+    function parseSatelliteCatalog(rawText) {
+        const satelliteLib = getSatelliteLib();
+        if (!satelliteLib) return [];
+
+        const lines = rawText
+            .split(/\r?\n/)
+            .map((line) => line.trimEnd())
+            .filter(Boolean);
+        const entries = [];
+
+        for (let index = 0; index < lines.length - 2; index += 1) {
+            const maybeName = lines[index];
+            const line1 = lines[index + 1];
+            const line2 = lines[index + 2];
+            if (!line1?.startsWith('1 ') || !line2?.startsWith('2 ')) continue;
+
+            const name = maybeName.replace(/^0\s+/, '').trim() || `SAT-${entries.length + 1}`;
+            try {
+                const satrec = satelliteLib.twoline2satrec(line1, line2);
+                const now = new Date(earthReferenceTimeMs());
+                const samplePosition = satelliteLib.propagate(satrec, now)?.position;
+                const geodetic = samplePosition
+                    ? satelliteLib.eciToGeodetic(samplePosition, satelliteLib.gstime(now))
+                    : null;
+                const altitudeKm = Number.isFinite(geodetic?.height) ? Math.max(0, geodetic.height) : 0;
+                const orbit = getOrbitElementsFromSatrec(satrec);
+                const regime = classifyOrbitRegime(orbit, altitudeKm);
+                const profile = inferSatelliteProfile(name, regime);
+                const color = satelliteColorForName(name);
+                const id = String(satrec.satnum || line1.slice(2, 7).trim() || entries.length + 1);
+                entries.push({
+                    id,
+                    name,
+                    satrec,
+                    type: profile.type,
+                    operator: profile.operator,
+                    country: profile.country,
+                    profileSource: profile.profileSource,
+                    eccentricity: orbit.eccentricity,
+                    inclinationDeg: orbit.inclinationDeg,
+                    perigeeKm: orbit.perigeeKm,
+                    apogeeKm: orbit.apogeeKm,
+                    periodMinutes: orbit.periodMinutes,
+                    altitudeKm,
+                    regime,
+                    color: [color.r, color.g, color.b]
+                });
+            } catch (error) {
+                // skip malformed entries
+            }
+            index += 2;
+        }
+
+        return entries;
+    }
+
+    function rebuildSatelliteLayer() {
+        if (!state.satellitePoints) return;
+
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(Math.max(1, state.satelliteCatalog.length) * 3);
+        const colors = new Float32Array(Math.max(1, state.satelliteCatalog.length) * 3);
+
+        state.satelliteCatalog.forEach((satellite, index) => {
+            const [r, g, b] = satellite.color;
+            colors[index * 3] = r;
+            colors[index * 3 + 1] = g;
+            colors[index * 3 + 2] = b;
+        });
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geometry.setDrawRange(0, 0);
+
+        state.satellitePoints.geometry.dispose();
+        state.satellitePoints.geometry = geometry;
+        state.satellitePoints.visible = state.satelliteCatalog.length > 0;
+        state.satelliteIndex = new Map(state.satelliteCatalog.map((satellite) => [satellite.id, satellite]));
+        if (state.followSatelliteId && !state.satelliteIndex.has(state.followSatelliteId)) {
+            state.followSatelliteId = null;
+        }
+        refreshSatelliteFocusVisuals();
+    }
+
+    function refreshSatelliteFocusVisuals() {
+        const followedSatellite = state.followSatelliteId
+            ? state.satelliteIndex.get(state.followSatelliteId) || null
+            : null;
+        const isFollowingSatellite = Boolean(followedSatellite);
+        document.body.classList.toggle('satellite-following', isFollowingSatellite);
+        if (dom['satellite-focus-panel']) {
+            dom['satellite-focus-panel'].setAttribute('aria-hidden', String(!isFollowingSatellite));
+        }
+
+        if (isFollowingSatellite && state.panelVisibility.news) {
+            state.satelliteAutoHidNews = true;
+            state.panelVisibility.news = false;
+            applyPanelVisibility();
+            writeUiState();
+        } else if (!isFollowingSatellite && state.satelliteAutoHidNews) {
+            state.satelliteAutoHidNews = false;
+            state.panelVisibility.news = true;
+            applyPanelVisibility();
+            writeUiState();
+        }
+
+        if (state.satellitePoints?.material) {
+            state.satellitePoints.material.opacity = isFollowingSatellite
+                ? SATELLITE_LAYER_DIMMED_OPACITY
+                : SATELLITE_LAYER_OPACITY;
+            state.satellitePoints.material.needsUpdate = true;
+        }
+        updateSatelliteFocusPanel(followedSatellite);
+        updateSatelliteHighlight(performance.now());
+    }
+
+    function updateSatelliteFocusPanel(satellite) {
+        if (!dom['satellite-focus-panel']) return;
+        if (!satellite) {
+            setText('sat-focus-title', '--');
+            setText('sat-focus-subtitle', 'Keine Verfolgung aktiv');
+            return;
+        }
+
+        setText('sat-focus-title', satellite.name);
+        setText('sat-focus-subtitle', `NORAD ${satellite.id}`);
+        setText('sat-focus-type', satellite.type || '--');
+        setText('sat-focus-operator', satellite.operator || '--');
+        setText('sat-focus-country', satellite.country || '--');
+        setText('sat-focus-profile-source', satellite.profileSource || '--');
+        setText('sat-focus-regime', satellite.regime || '--');
+        setText('sat-focus-altitude', formatAltitudeKm(satellite.altitudeKm));
+        setText('sat-focus-perigee', formatAltitudeKm(satellite.perigeeKm));
+        setText('sat-focus-apogee', formatAltitudeKm(satellite.apogeeKm));
+        setText('sat-focus-inclination', formatSatelliteNumber(satellite.inclinationDeg, 2, '°'));
+        setText('sat-focus-period', formatSatellitePeriod(satellite.periodMinutes));
+        setText('sat-focus-eccentricity', formatSatelliteNumber(satellite.eccentricity, 5));
+        setText('sat-focus-latitude', formatCoordinate(satellite.latitudeDeg, 'N', 'S'));
+        setText('sat-focus-longitude', formatCoordinate(satellite.longitudeDeg, 'E', 'W'));
+    }
+
+    function updateSatelliteHighlight(now = performance.now()) {
+        if (!state.satelliteHighlight) return;
+        const localPosition = state.followSatelliteId
+            ? state.satelliteWorldPositions.get(state.followSatelliteId)
+            : null;
+        if (!localPosition || !state.earthMesh) {
+            state.satelliteHighlight.visible = false;
+            return;
+        }
+
+        state.satelliteHighlight.position.copy(localPosition);
+        state.satelliteHighlight.visible = true;
+
+        const worldPosition = state.earthMesh.localToWorld(localPosition.clone());
+        const cameraDistance = state.camera
+            ? state.camera.position.distanceTo(worldPosition)
+            : 60;
+        const scale = THREE.MathUtils.clamp(cameraDistance * 0.018, 0.48, 9);
+        const pulse = 1 + 0.12 * Math.sin(now * 0.006);
+        state.satelliteHighlight.scale.setScalar(scale * pulse);
+
+        const glow = state.satelliteHighlight.userData.glow;
+        if (glow) {
+            glow.scale.setScalar(glow.userData.baseScale || 1.5);
+            glow.material.opacity = 0.72 + 0.18 * (0.5 + 0.5 * Math.sin(now * 0.008));
+        }
+    }
+
+    function frameFollowedSatellite(worldPosition, satellite) {
+        if (!state.camera || !state.controls) return;
+        const currentOffset = state.camera.position.clone().sub(state.controls.target);
+        const viewDirection = currentOffset.lengthSq() > 1e-6
+            ? currentOffset.normalize()
+            : worldPosition.clone().normalize().multiplyScalar(0.85).add(new THREE.Vector3(0.18, 0.36, 0.22)).normalize();
+        const orbitRadius = ARTEMIS.EARTH_RADIUS + ((satellite?.altitudeKm || 0) / 1000);
+        const viewDistance = THREE.MathUtils.clamp(orbitRadius * 0.34, 4.2, 34);
+        state.controls.target.copy(worldPosition);
+        state.camera.position.copy(worldPosition).add(viewDirection.multiplyScalar(viewDistance));
+        state.camera.updateProjectionMatrix();
+    }
+
+    function updateSatelliteStats() {
+        dom['sat-stat-total'].textContent = state.satelliteCatalogLoaded
+            ? estimateSatelliteOrbitTotal().toLocaleString('de-DE')
+            : '--';
+        dom['sat-stat-live'].textContent = state.satelliteCatalogLoaded
+            ? state.satelliteLiveCount.toLocaleString('de-DE')
+            : '--';
+        updateSatelliteSearchStatus();
+    }
+
+    function propagateSatellites(force = false) {
+        const satelliteLib = getSatelliteLib();
+        if (!satelliteLib || !state.satelliteCatalog.length || !state.satellitePoints) {
+            state.satelliteLiveCount = 0;
+            state.satelliteWorldPositions.clear();
+            state.satelliteDrawOrder = [];
+            refreshSatelliteFocusVisuals();
+            updateSatelliteStats();
+            return;
+        }
+
+        const referenceMs = earthReferenceTimeMs();
+        if (!force && referenceMs - state.satelliteLastPropagationMs < SATELLITE_PROPAGATION_INTERVAL_MS) {
+            return;
+        }
+        state.satelliteLastPropagationMs = referenceMs;
+
+        const geometry = state.satellitePoints.geometry;
+        const positionAttr = geometry.getAttribute('position');
+        const referenceDate = new Date(referenceMs);
+        const referenceAngle = satelliteLib.gstime(referenceDate);
+        let visibleCount = 0;
+        state.satelliteWorldPositions.clear();
+        state.satelliteDrawOrder = [];
+
+        state.satelliteCatalog.forEach((satellite) => {
+            const propagated = satelliteLib.propagate(satellite.satrec, referenceDate);
+            const eciPosition = propagated?.position;
+            if (!eciPosition || !Number.isFinite(eciPosition.x) || !Number.isFinite(eciPosition.y) || !Number.isFinite(eciPosition.z)) {
+                return;
+            }
+
+            const geodetic = satelliteLib.eciToGeodetic(eciPosition, referenceAngle);
+            const latitude = satelliteLib.degreesLat(geodetic.latitude);
+            const longitude = satelliteLib.degreesLong(geodetic.longitude);
+            const altitudeKm = Math.max(0, geodetic.height);
+            satellite.altitudeKm = altitudeKm;
+            satellite.latitudeDeg = latitude;
+            satellite.longitudeDeg = longitude;
+            if (!orbitRegimeActive(satellite.regime)) {
+                return;
+            }
+            const vector = latLonToVector3(latitude, longitude, ARTEMIS.EARTH_RADIUS + altitudeKm / 1000);
+
+            positionAttr.setXYZ(visibleCount, vector.x, vector.y, vector.z);
+            state.satelliteWorldPositions.set(satellite.id, vector.clone());
+            state.satelliteDrawOrder[visibleCount] = satellite.id;
+            visibleCount += 1;
+        });
+
+        positionAttr.needsUpdate = true;
+        geometry.setDrawRange(0, visibleCount);
+        state.satelliteLiveCount = visibleCount;
+        state.satellitePoints.visible = visibleCount > 0;
+        refreshSatelliteFocusVisuals();
+        updateSatelliteStats();
+        if (document.body.classList.contains('search-open')) {
+            renderSatelliteSearchResults();
+        }
+    }
+
+    async function fetchSatelliteCatalog() {
+        if (!state.satelliteLibraryReady) {
+            state.satelliteCatalog = [];
+            state.satelliteCatalogLoaded = false;
+            state.satelliteLiveCount = 0;
+            state.satelliteLastError = state.satelliteLastError || 'Satellitenbibliothek nicht verfuegbar.';
+            rebuildSatelliteLayer();
+            updateSatelliteStats();
+            renderSatelliteSearchResults();
+            return;
+        }
+        try {
+            state.satelliteLastError = '';
+            const response = await fetch(SATELLITE_TLE_URL, {
+                cache: 'no-cache',
+                headers: { Accept: 'text/plain' }
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const rawText = await response.text();
+            if (!rawText.trim()) throw new Error('statischer Satellitenkatalog leer');
+            writeSatelliteCache(rawText);
+            state.satelliteCatalog = parseSatelliteCatalog(rawText);
+            state.satelliteCatalogLoaded = true;
+            rebuildSatelliteLayer();
+            propagateSatellites(true);
+            renderSatelliteSearchResults();
+        } catch (error) {
+            const cached = readSatelliteCache();
+            if (cached?.rawText) {
+                state.satelliteCatalog = parseSatelliteCatalog(cached.rawText);
+                state.satelliteCatalogLoaded = true;
+                state.satelliteLastError = `Satelliten aus lokalem Cache · Live-Quelle aktuell nicht erreichbar (${error.message || 'unbekannter Fehler'}).`;
+                rebuildSatelliteLayer();
+                propagateSatellites(true);
+                renderSatelliteSearchResults();
+                return;
+            }
+
+            state.satelliteCatalog = [];
+            state.satelliteCatalogLoaded = false;
+            state.satelliteLiveCount = 0;
+            state.satelliteLastError = `Satellitenkatalog konnte nicht geladen werden (${error.message || 'unbekannter Fehler'}).`;
+            rebuildSatelliteLayer();
+            updateSatelliteStats();
+            renderSatelliteSearchResults();
+        }
+    }
+
+    async function initSatelliteTracking() {
+        updateSatelliteStats();
+        await ensureSatelliteLibrary();
+        fetchSatelliteCatalog();
+        if (state.satelliteFetchTimer) clearInterval(state.satelliteFetchTimer);
+        state.satelliteFetchTimer = setInterval(fetchSatelliteCatalog, SATELLITE_FETCH_INTERVAL_MS);
+    }
+
+    function rebuildLaunchMarkers() {
+        if (!state.launchMarkerRoot) return;
+        while (state.launchMarkerRoot.children.length) {
+            state.launchMarkerRoot.remove(state.launchMarkerRoot.children[0]);
+        }
+        state.launchMarkers.clear();
+
+        state.launches.forEach((launch, index) => {
+            const lat = parseFloat(launch?.pad?.latitude);
+            const lon = parseFloat(launch?.pad?.longitude);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+            const launchId = launchKey(launch);
+            const group = new THREE.Group();
+            const anchor = latLonToVector3(lat, lon, ARTEMIS.EARTH_RADIUS + 0.12);
+            const normal = anchor.clone().normalize();
+
+            const stemHeight = 0.7;
+            const stem = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.035, 0.035, stemHeight, 10),
+                new THREE.MeshBasicMaterial({ color: 0x66d9ff })
+            );
+            stem.position.copy(anchor.clone().add(normal.clone().multiplyScalar(stemHeight * 0.45)));
+            stem.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+
+            const head = new THREE.Mesh(
+                new THREE.SphereGeometry(0.16, 12, 12),
+                new THREE.MeshBasicMaterial({ color: index === 0 ? 0xffbf54 : 0x20e6ff })
+            );
+            head.position.copy(anchor.clone().add(normal.clone().multiplyScalar(stemHeight)));
+            head.userData.pickKind = 'launch';
+            head.userData.launchId = launchId;
+
+            group.add(stem);
+            group.add(head);
+            group.userData.active = launchId === state.selectedLaunchId;
+            state.launchMarkerRoot.add(group);
+            state.launchMarkers.set(launchId, { group, pickMesh: head, normal });
+        });
+
+        buildPickableList();
+    }
+
+    function updateLaunchMarkers(now) {
+        state.launchMarkers.forEach((marker, launchId) => {
+            const isActive = marker.group.userData.active;
+            const pulse = isActive ? 1 + 0.25 * Math.sin(now * 0.005) : 1 + 0.08 * Math.sin(now * 0.003 + launchId.length);
+            marker.pickMesh.scale.setScalar(pulse);
+        });
+    }
+
+    function getLaunchMarkerWorldData(launchId) {
+        const marker = state.launchMarkers.get(launchId);
+        if (!marker) return null;
+        const position = new THREE.Vector3();
+        marker.pickMesh.getWorldPosition(position);
+        return {
+            position,
+            normal: position.clone().normalize()
+        };
+    }
+
+    function getObserverWorldPosition() {
+        if (!state.observerMarker || !state.observerMarker.visible) return null;
+        return state.observerMarker.getWorldPosition(new THREE.Vector3());
+    }
+
+    function getSatelliteWorldPosition(satelliteId) {
+        const local = state.satelliteWorldPositions.get(satelliteId);
+        if (!local || !state.earthMesh) return null;
+        return state.earthMesh.localToWorld(local.clone());
+    }
+
+    function stopSatelliteFollow() {
+        if (!state.followSatelliteId) return;
+        state.followSatelliteId = null;
+        refreshSatelliteFocusVisuals();
+        renderSatelliteSearchResults();
+    }
+
+    function pickVisibleSatellite() {
+        if (!state.satellitePoints?.visible || !state.satelliteLiveCount) return null;
+        const previousThreshold = state.raycaster.params.Points?.threshold;
+        state.raycaster.params.Points = state.raycaster.params.Points || {};
+        state.raycaster.params.Points.threshold = SATELLITE_PICK_THRESHOLD;
+        const hits = state.raycaster.intersectObject(state.satellitePoints, false);
+        if (previousThreshold === undefined) {
+            delete state.raycaster.params.Points.threshold;
+        } else {
+            state.raycaster.params.Points.threshold = previousThreshold;
+        }
+
+        const hit = hits.find((candidate) =>
+            Number.isInteger(candidate.index) &&
+            candidate.index >= 0 &&
+            candidate.index < state.satelliteLiveCount
+        );
+        if (!hit) return null;
+        const satelliteId = state.satelliteDrawOrder[hit.index];
+        return satelliteId ? state.satelliteIndex.get(satelliteId) || null : null;
+    }
+
+    function focusObserverOnce() {
+        const world = getObserverWorldPosition();
+        if (!world) return false;
+        exitFreeCamera();
+        clearFocusModes();
+        setFocusTarget(world);
+        return true;
+    }
+
+    function toggleFollowObserver() {
+        const world = getObserverWorldPosition();
+        if (!world) return;
+        exitFreeCamera();
+        const next = !state.followObserver;
+        clearFocusModes();
+        if (next) {
+            state.followObserver = true;
+            setFocusTarget(world);
+        }
+        dom['observer-view-btn']?.classList.toggle('active', state.followObserver);
+    }
+
+    function focusSatelliteById(satelliteId, follow) {
+        const satellite = state.satelliteIndex.get(satelliteId);
+        if (!satellite) return;
+        if (follow && state.followSatelliteId === satelliteId) {
+            stopSatelliteFollow();
+            return;
+        }
+        if (!orbitRegimeActive(satellite.regime)) {
+            state.satelliteFilters[satellite.regime] = true;
+            document.querySelector(`[data-sat-filter="${satellite.regime}"]`)?.setAttribute('aria-pressed', 'true');
+            propagateSatellites(true);
+        }
+
+        const world = getSatelliteWorldPosition(satelliteId);
+        if (!world) return;
+        exitFreeCamera();
+        clearFocusModes();
+        setFocusTarget(world);
+        if (follow) {
+            state.followSatelliteId = satelliteId;
+            frameFollowedSatellite(world, satellite);
+        }
+        refreshSatelliteFocusVisuals();
+        renderSatelliteSearchResults();
+    }
+
+    function clearFocusModes() {
+        state.followMoon = false;
+        state.followOrion = false;
+        state.followObserver = false;
+        state.followSatelliteId = null;
+        state.focusLaunchId = null;
+        state.focusedBody = null;
+        refreshSatelliteFocusVisuals();
+        dom['observer-view-btn']?.classList.remove('active');
+        dom['moon-view-btn']?.classList.remove('active');
+        dom['follow-artemis']?.classList.remove('active');
+        if (document.body.classList.contains('search-open')) {
+            renderSatelliteSearchResults();
+        }
+    }
+
+    function onControlStart() {
+        if (state.freeCameraMode) return;
+        if (state.followSatelliteId) {
+            state.userNavigatingCamera = false;
+            return;
+        }
+        state.userNavigatingCamera = true;
+        clearFocusModes();
+    }
+
+    function onControlEnd() {
+        state.userNavigatingCamera = false;
+    }
+
+    function onScenePointerDown(event) {
+        if (event.button !== 0) return;
+        state.pointerDownScreen = { x: event.clientX, y: event.clientY, dragged: false };
+    }
+
+    function onScenePointerMove(event) {
+        if (!state.pointerDownScreen) return;
+        const dx = event.clientX - state.pointerDownScreen.x;
+        const dy = event.clientY - state.pointerDownScreen.y;
+        if (Math.hypot(dx, dy) >= SCENE_CLICK_DRAG_TOLERANCE_PX) {
+            state.pointerDownScreen.dragged = true;
+        }
+    }
+
+    function onScenePointerUp() {
+        if (state.pointerDownScreen?.dragged) {
+            state.sceneClickBlockedUntil = performance.now() + 220;
+        }
+        state.pointerDownScreen = null;
+    }
+
+    function onScenePointerCancel() {
+        state.pointerDownScreen = null;
+    }
+
+    function focusSelectedLaunch() {
+        const launch = getSelectedLaunch();
+        if (!launch) return;
+        const launchId = launchKey(launch);
+        const world = getLaunchMarkerWorldData(launchId);
+        if (!world) return;
+        exitFreeCamera();
+        state.focusLaunchId = null;
+        state.focusedBody = null;
+        state.followObserver = false;
+        state.followSatelliteId = null;
+        state.followMoon = false;
+        state.followOrion = false;
+        refreshSatelliteFocusVisuals();
+        dom['observer-view-btn']?.classList.remove('active');
+        dom['moon-view-btn']?.classList.remove('active');
+        dom['follow-artemis']?.classList.remove('active');
+        setFocusTarget(world.position);
+    }
+
+    function focusFromPick(kind, planetIndex) {
+        exitFreeCamera();
+        clearFocusModes();
+        if (kind === 'sun') {
+            setFocusTarget(state.sunScenePos.clone());
+            return;
+        }
+        if (kind === 'moon') {
+            setFocusTarget(state.moonMesh.position.clone());
+            return;
+        }
+        if (kind === 'planet') {
+            if (planetIndex === 2) {
+                setFocusTarget(new THREE.Vector3(0, 0, 0));
+            } else if (state.planetMeshes[planetIndex]) {
+                setFocusTarget(state.planetMeshes[planetIndex].position.clone());
+            }
+        }
+    }
+
+    function jumpCameraToBody() {
+        if (!state.focusedBody) return;
+        const target = new THREE.Vector3();
+
+        if (state.focusedBody.kind === 'sun') {
+            target.copy(state.sunScenePos);
+        } else if (state.focusedBody.kind === 'planet') {
+            const idx = state.focusedBody.index;
+            if (idx === 2) {
+                target.set(0, 0, 0);
+            } else {
+                const planetMesh = state.planetMeshes[idx];
+                if (!planetMesh) return;
+                target.copy(planetMesh.position);
+            }
+        }
+        setFocusTarget(target);
+    }
+
+    function onSceneClick(event) {
+        if (event.button !== 0) return;
+        if (performance.now() < state.sceneClickBlockedUntil) return;
+        if (state.followSatelliteId) return;
+        const rect = state.renderer.domElement.getBoundingClientRect();
+        state.pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        state.pointerNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        state.raycaster.setFromCamera(state.pointerNdc, state.camera);
+
+        const pickedSatellite = pickVisibleSatellite();
+        if (pickedSatellite) {
+            focusSatelliteById(pickedSatellite.id, true);
+            return;
+        }
+
+        const hits = state.raycaster.intersectObjects(state.pickableMeshes, false);
+        if (!hits.length) return;
+        const preferredHit = hits.find((hit) => hit.object?.userData?.pickKind === 'launch') || hits[0];
+        const data = preferredHit.object.userData || {};
+        if (data.pickKind === 'launch') {
+            selectLaunch(data.launchId, true);
+            return;
+        }
+        if (data.pickKind === 'sun') focusFromPick('sun');
+        if (data.pickKind === 'moon') focusFromPick('moon');
+        if (data.pickKind === 'planet' && data.planetIndex !== undefined) focusFromPick('planet', data.planetIndex);
+    }
+
+    function formatWarpLabel(value) {
+        const absolute = Math.abs(value);
+        const core = absolute >= 1000 ? absolute.toLocaleString('de-DE') : String(absolute);
+        return `${value < 0 ? '-' : ''}${core}x`;
+    }
+
+    function refreshWarpButtons() {
+        dom['warp-reset-btn']?.classList.toggle('active', state.timeWarp === 1);
+        dom['warp-forward-btn']?.classList.toggle('active', state.timeWarp > 1);
+        dom['warp-backward-btn']?.classList.toggle('active', state.timeWarp < 0);
+        dom['warp-display'].textContent = formatWarpLabel(state.timeWarp);
+    }
+
+    function warpToOne() {
+        state.timeWarp = 1;
+        state.warpStepMag = 10;
+        state.warpTrack = 'idle';
+        refreshWarpButtons();
+    }
+
+    function cycleWarpForward() {
+        state.warpStepMag = state.warpTrack === 'forward' && state.timeWarp >= 10
+            ? Math.min(state.warpStepMag * 10, 1e12)
+            : 10;
+        state.warpTrack = 'forward';
+        state.timeWarp = state.warpStepMag;
+        refreshWarpButtons();
+    }
+
+    function cycleWarpBackward() {
+        state.warpStepMag = state.warpTrack === 'backward' && state.timeWarp <= -10
+            ? Math.min(state.warpStepMag * 10, 1e12)
+            : 10;
+        state.warpTrack = 'backward';
+        state.timeWarp = -state.warpStepMag;
+        refreshWarpButtons();
+    }
+
+    function toggleFreeCamera() {
+        state.freeCameraMode = !state.freeCameraMode;
+        dom['free-cam-btn']?.classList.toggle('active', state.freeCameraMode);
+        state.controls.enabled = true;
+        state.controls.enablePan = !state.freeCameraMode;
+        if (state.freeCameraMode) {
+            clearFocusModes();
+        }
+    }
+
+    function exitFreeCamera() {
+        if (!state.freeCameraMode) return;
+        state.freeCameraMode = false;
+        state.controls.enabled = true;
+        state.controls.enablePan = true;
+        dom['free-cam-btn']?.classList.remove('active');
+        Object.keys(state.flyKeys).forEach((key) => { state.flyKeys[key] = false; });
+    }
+
+    function toggleMoonView() {
+        exitFreeCamera();
+        clearFocusModes();
+        setFocusTarget(state.moonMesh.position.clone());
+        dom['moon-view-btn']?.classList.add('active');
+    }
+
+    function toggleFollowOrion() {
+        if (!state.artemisReplayEnabled) {
+            setArtemisReplayEnabled(true);
+        }
+        exitFreeCamera();
+        state.followOrion = !state.followOrion;
+        if (state.followOrion) {
+            state.focusLaunchId = null;
+            state.focusedBody = null;
+            state.followObserver = false;
+            state.followSatelliteId = null;
+            state.followMoon = false;
+            refreshSatelliteFocusVisuals();
+            dom['observer-view-btn']?.classList.remove('active');
+            dom['moon-view-btn']?.classList.remove('active');
+        }
+        dom['follow-artemis']?.classList.toggle('active', state.followOrion);
+    }
+
+    function resetView() {
+        exitFreeCamera();
+        clearFocusModes();
+        setFocusTarget(new THREE.Vector3(0, 0, 0));
+    }
+
+    function solarSystemView() {
+        exitFreeCamera();
+        clearFocusModes();
+        setFocusTarget(state.sunScenePos.clone());
+    }
+
+    function jumpToNow() {
+        state.simTime = Date.now();
+        warpToOne();
+        clearFocusModes();
+    }
+
+    function formatMissionMetReadout(metHours) {
+        const totalSeconds = Math.max(0, metHours * 3600);
+        const days = Math.floor(totalSeconds / 86400);
+        const hours = Math.floor((totalSeconds % 86400) / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = Math.floor(totalSeconds % 60);
+        return `T+ ${days}d ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} MET`;
+    }
+
+    function syncMissionSlider() {
+        if (!dom['mission-met-slider'] || state.missionSliderDragging || state.totalMissionHours <= 0) return;
+        const met = ARTEMIS.getMET(sceneTimeMs());
+        const clamped = THREE.MathUtils.clamp(met, 0, state.totalMissionHours);
+        const pct = (clamped / state.totalMissionHours) * 1000;
+        dom['mission-met-slider'].value = String(Math.round(pct * 1000) / 1000);
+        dom['mission-met-readout'].textContent = formatMissionMetReadout(clamped);
+    }
+
+    function onMissionSliderInput() {
+        if (!dom['mission-met-slider'] || state.totalMissionHours <= 0) return;
+        const t = dom['mission-met-slider'].valueAsNumber / 1000;
+        const met = t * state.totalMissionHours;
+        if (!state.artemisReplayEnabled) {
+            setArtemisReplayEnabled(true);
+        }
+        state.simTime = simTimeFromMissionMet(met);
+        dom['mission-met-readout'].textContent = formatMissionMetReadout(met);
+    }
+
+    function jumpToMissionMet(metHours) {
+        if (!state.artemisReplayEnabled) {
+            setArtemisReplayEnabled(true);
+        }
+        state.simTime = simTimeFromMissionMet(THREE.MathUtils.clamp(metHours, 0, state.totalMissionHours));
+        syncMissionSlider();
+    }
+
+    function buildMissionTimeline() {
+        if (!dom['mission-timeline-items']) return;
+        dom['mission-timeline-items'].innerHTML = '';
+        ARTEMIS.MILESTONES.forEach((milestone, index) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'mission-step future';
+            button.id = `mission-step-${index}`;
+
+            const dot = document.createElement('div');
+            dot.className = 'mission-step-dot';
+
+            const content = document.createElement('div');
+            const title = document.createElement('strong');
+            title.textContent = milestone.name;
+            const timing = document.createElement('span');
+            timing.textContent = `T+ ${formatTimerLabel(milestone.t)}`;
+
+            content.append(title, timing);
+            button.append(dot, content);
+            button.addEventListener('click', () => {
+                jumpToMissionMet(milestone.t);
+            });
+            dom['mission-timeline-items'].appendChild(button);
+        });
+    }
+
+    function formatTimerLabel(hours) {
+        const totalSeconds = Math.max(0, hours * 3600);
+        const days = Math.floor(totalSeconds / 86400);
+        const hh = Math.floor((totalSeconds % 86400) / 3600);
+        const mm = Math.floor((totalSeconds % 3600) / 60);
+        const ss = Math.floor(totalSeconds % 60);
+        return `${days}d ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+    }
+
+    function updateMissionTimeline(metHours) {
+        let activeIndex = -1;
+        for (let i = ARTEMIS.MILESTONES.length - 1; i >= 0; i--) {
+            if (metHours >= ARTEMIS.MILESTONES[i].t) {
+                activeIndex = i;
+                break;
+            }
+        }
+
+        ARTEMIS.MILESTONES.forEach((milestone, index) => {
+            const element = document.getElementById(`mission-step-${index}`);
+            if (!element) return;
+            element.classList.remove('done', 'active', 'future');
+            if (index < activeIndex) element.classList.add('done');
+            else if (index === activeIndex) element.classList.add('active');
+            else element.classList.add('future');
+        });
+
+        if (activeIndex !== state.missionTimelineActiveIndex) {
+            state.missionTimelineActiveIndex = activeIndex;
+            const activeElement = activeIndex >= 0 ? document.getElementById(`mission-step-${activeIndex}`) : null;
+            if (activeElement && document.body.classList.contains('settings-open')) {
+                activeElement.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+        }
+    }
+
+    function formatDistance(km) {
+        if (!Number.isFinite(km)) return '--';
+        if (km >= 1000) return `${Math.round(km).toLocaleString('de-DE')} km`;
+        return `${km.toFixed(0)} km`;
+    }
+
+    function formatVelocity(kms) {
+        if (!Number.isFinite(kms)) return '--';
+        if (kms >= 10) return `${kms.toFixed(1)} km/s`;
+        if (kms >= 1) return `${kms.toFixed(2)} km/s`;
+        return `${(kms * 1000).toFixed(0)} m/s`;
+    }
+
+    function updateArtemisPanel(metHours) {
+        const phase = ARTEMIS.getPhase(metHours);
+        const pos = ARTEMIS.interpolatePosition(metHours);
+        const moonPos = ARTEMIS.getMoonPosition(metHours);
+        const distEarth = Math.sqrt(pos.x ** 2 + pos.y ** 2 + pos.z ** 2) * 1000;
+        const distMoon = Math.sqrt(
+            (pos.x - moonPos.x) ** 2 +
+            (pos.y - moonPos.y) ** 2 +
+            (pos.z - moonPos.z) ** 2
+        ) * 1000;
+        const velocity = ARTEMIS.getVelocity(metHours);
+
+        const totalSeconds = Math.max(0, metHours * 3600);
+        const days = Math.floor(totalSeconds / 86400);
+        const hours = Math.floor((totalSeconds % 86400) / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = Math.floor(totalSeconds % 60);
+
+        dom['met-clock'].textContent =
+            `T+ ${days}d ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        dom['mission-phase'].textContent = phase.name;
+        dom['mission-date'].textContent = localDateTime.format(new Date(sceneTimeMs()));
+        dom['dist-earth'].textContent = formatDistance(distEarth);
+        dom['dist-moon'].textContent = formatDistance(distMoon);
+        dom['velocity'].textContent = formatVelocity(velocity);
+        dom['mission-met-readout'].textContent = formatMissionMetReadout(metHours);
+        dom['mission-progress-fill'].style.width = `${Math.max(0, Math.min(1, metHours / state.totalMissionHours)) * 100}%`;
+        updateMissionTimeline(metHours);
     }
 
     function updateTrajectoryLines(metHours) {
-        const pastPts = [], futurePts = [];
-        for (const pt of fullTrajectory) {
-            const v = new THREE.Vector3(pt.x, pt.y, pt.z);
-            if (pt.t <= metHours) {
-                pastPts.push(v);
+        if (!state.fullTrajectory.length || !state.artemisReplayEnabled) return;
+        const past = [];
+        const future = [];
+        state.fullTrajectory.forEach((point) => {
+            const vector = new THREE.Vector3(point.x, point.y, point.z);
+            if (point.t <= metHours) {
+                past.push(vector);
             } else {
-                if (futurePts.length === 0 && pastPts.length > 0)
-                    futurePts.push(pastPts[pastPts.length - 1].clone());
-                futurePts.push(v);
+                if (!future.length && past.length) future.push(past[past.length - 1].clone());
+                future.push(vector);
             }
+        });
+
+        if (past.length) {
+            state.pastLine.geometry.dispose();
+            state.pastLine.geometry = new THREE.BufferGeometry().setFromPoints(past);
         }
-        if (pastPts.length > 0) {
-            pastLine.geometry.dispose();
-            pastLine.geometry = new THREE.BufferGeometry().setFromPoints(pastPts);
-        }
-        if (futurePts.length > 0) {
-            futureLine.geometry.dispose();
-            futureLine.geometry = new THREE.BufferGeometry().setFromPoints(futurePts);
-            futureLine.computeLineDistances();
+        if (future.length) {
+            state.futureLine.geometry.dispose();
+            state.futureLine.geometry = new THREE.BufferGeometry().setFromPoints(future);
+            state.futureLine.computeLineDistances();
         }
     }
 
-    function refreshOrbitLineGeometry(line, planetIdx, T) {
-        const orbitPts = ARTEMIS2.getPlanetOrbitPoints(planetIdx, T, 256);
-        const n = orbitPts.length;
-        const geo = line.geometry;
-        const pos = geo.attributes.position;
-        if (pos && pos.count === n) {
-            const arr = pos.array;
-            for (let i = 0; i < n; i++) {
-                const p = orbitPts[i];
-                arr[i * 3] = p.x;
-                arr[i * 3 + 1] = p.y;
-                arr[i * 3 + 2] = p.z;
+    function updateSolarSystem(dateMs) {
+        const T = ARTEMIS.getJulianCenturies(dateMs);
+        const sunPos = ARTEMIS.getSunPosition(T);
+        state.sunScenePos.set(sunPos.x, sunPos.y, sunPos.z);
+
+        state.sunMesh.position.copy(state.sunScenePos);
+        state.sunGlow.position.copy(state.sunScenePos);
+        state.sunPointLight.position.copy(state.sunScenePos);
+
+        const sunDirection = state.sunScenePos.clone().normalize();
+        state.sunDirLight.position.copy(sunDirection.clone().multiplyScalar(500));
+        state.fillDirLight.position.copy(sunDirection.clone().multiplyScalar(-250));
+
+        Object.keys(state.planetMeshes).forEach((key) => {
+            const index = Number(key);
+            const mesh = state.planetMeshes[index];
+            const position = ARTEMIS.getPlanetPosition(index, T);
+            mesh.position.set(position.x, position.y, position.z);
+            if (mesh.userData.saturnRing) {
+                mesh.userData.saturnRing.position.copy(mesh.position);
             }
-            pos.needsUpdate = true;
-            geo.computeBoundingSphere();
+            refreshOrbitLineGeometry(state.planetOrbits[index], index, T);
+        });
+        refreshOrbitLineGeometry(state.planetOrbits[2], 2, T);
+    }
+
+    function refreshOrbitLineGeometry(line, planetIndex, T) {
+        if (!line) return;
+        const orbitPoints = ARTEMIS.getPlanetOrbitPoints(planetIndex, T, 256);
+        const geometry = line.geometry;
+        const positionAttr = geometry.attributes.position;
+        if (positionAttr && positionAttr.count === orbitPoints.length) {
+            const array = positionAttr.array;
+            orbitPoints.forEach((point, index) => {
+                array[index * 3] = point.x;
+                array[index * 3 + 1] = point.y;
+                array[index * 3 + 2] = point.z;
+            });
+            positionAttr.needsUpdate = true;
+            geometry.computeBoundingSphere();
         } else {
-            const vecs = orbitPts.map(pt => new THREE.Vector3(pt.x, pt.y, pt.z));
-            geo.dispose();
-            line.geometry = new THREE.BufferGeometry().setFromPoints(vecs);
+            line.geometry.dispose();
+            line.geometry = new THREE.BufferGeometry().setFromPoints(
+                orbitPoints.map((point) => new THREE.Vector3(point.x, point.y, point.z))
+            );
         }
         line.computeLineDistances();
     }
 
-    /** Sonne, Planeten, Umlaufbahnen und Licht für Simulationszeitpunkt dateMs (UTC ms) */
-    function updateSolarSystem(dateMs) {
-        const T = ARTEMIS2.getJulianCenturies(dateMs);
-        const sp = ARTEMIS2.getSunPosition(T);
-        sunScenePos.set(sp.x, sp.y, sp.z);
-
-        if (sunMesh) sunMesh.position.copy(sunScenePos);
-        if (sunGlow) sunGlow.position.copy(sunScenePos);
-        if (sunPointLight) sunPointLight.position.copy(sunScenePos);
-
-        const sunDir = sunScenePos.clone().normalize();
-        if (sunDirLight) sunDirLight.position.copy(sunDir.clone().multiplyScalar(500));
-        if (fillDirLight) fillDirLight.position.copy(sunScenePos.clone().normalize().multiplyScalar(-200));
-
-        for (let i = 0; i < 8; i++) {
-            if (i === 2) continue;
-            const mesh = planetMeshByIndex[i];
-            if (!mesh) continue;
-            const pos = ARTEMIS2.getPlanetPosition(i, T);
-            mesh.position.set(pos.x, pos.y, pos.z);
-            if (mesh.userData.saturnRing) {
-                mesh.userData.saturnRing.position.copy(mesh.position);
-            }
-            const orbitLn = planetOrbitByIndex[i];
-            if (orbitLn) refreshOrbitLineGeometry(orbitLn, i, T);
-        }
-        if (earthOrbitLine) refreshOrbitLineGeometry(earthOrbitLine, 2, T);
-    }
-
-    // ── UI Updates ──
-    function updateUI(metHours) {
-        const phase = ARTEMIS2.getPhase(metHours);
-        const pos = ARTEMIS2.interpolatePosition(metHours);
-        const moonPos = ARTEMIS2.getMoonPosition(metHours);
-        const distEarth = Math.sqrt(pos.x ** 2 + pos.y ** 2 + pos.z ** 2) * 1000;
-        const distMoon = Math.sqrt(
-            (pos.x - moonPos.x) ** 2 + (pos.y - moonPos.y) ** 2 + (pos.z - moonPos.z) ** 2
-        ) * 1000;
-        const velocity = ARTEMIS2.getVelocity(metHours);
-
-        const metDisplayH = metHours + DISPLAY_MET_OFFSET_H;
-        const totalSeconds = Math.max(0, metDisplayH * 3600);
-        const days = Math.floor(totalSeconds / 86400);
-        const hrs = Math.floor((totalSeconds % 86400) / 3600);
-        const mins = Math.floor((totalSeconds % 3600) / 60);
-        const secs = Math.floor(totalSeconds % 60);
-        const metStr = `T+ ${days}d ${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-
-        document.getElementById('met-clock').textContent = metStr;
-        document.getElementById('phase-name').textContent = phase.name;
-        document.getElementById('dist-earth').textContent = formatDistance(distEarth);
-        document.getElementById('dist-moon').textContent = formatDistance(distMoon);
-        document.getElementById('velocity').textContent = formatVelocity(velocity);
-
-        const KM_TO_MI = 0.621371;
-        document.getElementById('dist-earth-mi').textContent = formatDistance(distEarth * KM_TO_MI) + ' (mi)';
-        document.getElementById('dist-moon-mi').textContent = formatDistance(distMoon * KM_TO_MI) + ' (mi)';
-        document.getElementById('velocity-mi').textContent = Math.round(velocity * 2236.936).toLocaleString('de-DE') + ' mph';
-
-        updateTimeline(metHours);
-
-        const progress = Math.max(0, Math.min(1, metHours / totalMET_hours)) * 100;
-        document.getElementById('progress-fill').style.width = progress + '%';
-        document.getElementById('warp-display').textContent = formatWarpLabel(timeWarp);
-
-        const rt = document.getElementById('real-time-mez');
-        if (rt) rt.textContent = MEZ_FORMAT.format(new Date(sceneTimeMs() + DISPLAY_TIME_OFFSET_MS));
-    }
-
-    function formatDistance(km) {
-        if (km >= 1000) return Math.round(km).toLocaleString('de-DE') + ' km';
-        return km.toFixed(0) + ' km';
-    }
-
-    function formatVelocity(kms) {
-        if (kms >= 10) return kms.toFixed(1) + ' km/s';
-        if (kms >= 1) return kms.toFixed(2) + ' km/s';
-        return (kms * 1000).toFixed(0) + ' m/s';
-    }
-
-    // ── Timeline ──
-    let timelineBuilt = false;
-
-    function buildTimeline() {
-        if (timelineBuilt) return;
-        const container = document.getElementById('timeline-items');
-        if (!container || !ARTEMIS2.MILESTONES) return;
-        timelineBuilt = true;
-        container.innerHTML = '';
-        ARTEMIS2.MILESTONES.forEach((m, i) => {
-            const isLast = i === ARTEMIS2.MILESTONES.length - 1;
-            const item = document.createElement('div');
-            item.className = 'tl-item future';
-            item.id = 'tl-' + i;
-            item.innerHTML =
-                '<div class="tl-track"><div class="tl-dot"></div>' +
-                (isLast ? '' : '<div class="tl-line"></div>') +
-                '</div><div class="tl-content"><div class="tl-name">' +
-                m.name + '</div><div class="tl-time" id="tl-time-' + i + '"></div></div>';
-            container.appendChild(item);
-        });
-    }
-
-    function formatTimer(hours) {
-        if (hours <= 0) return '';
-        const d = Math.floor(hours / 24);
-        const h = Math.floor(hours % 24);
-        const m = Math.floor((hours * 60) % 60);
-        const s = Math.floor((hours * 3600) % 60);
-        let str = '';
-        if (d > 0) str += d + 'd ';
-        str += String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
-        return str;
-    }
-
-    let lastActiveIdx = -1;
-
-    function updateTimeline(metHours) {
-        buildTimeline();
-        const milestones = ARTEMIS2.MILESTONES;
-        if (!milestones) return;
-
-        let activeIdx = -1;
-        for (let i = milestones.length - 1; i >= 0; i--) {
-            if (metHours >= milestones[i].t) { activeIdx = i; break; }
-        }
-        const nextIdx = activeIdx + 1 < milestones.length ? activeIdx + 1 : -1;
-
-        if (activeIdx !== lastActiveIdx) {
-            lastActiveIdx = activeIdx;
-            for (let i = 0; i < milestones.length; i++) {
-                const el = document.getElementById('tl-' + i);
-                if (!el) continue;
-                if (i < activeIdx) el.className = 'tl-item done';
-                else if (i === activeIdx) el.className = 'tl-item done';
-                else if (i === nextIdx) el.className = 'tl-item active';
-                else el.className = 'tl-item future';
-            }
-            if (nextIdx >= 0) {
-                const el = document.getElementById('tl-' + nextIdx);
-                if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            }
-        }
-
-        for (let i = 0; i < milestones.length; i++) {
-            const timeEl = document.getElementById('tl-time-' + i);
-            if (!timeEl) continue;
-            const diff = milestones[i].t - metHours;
-            if (diff <= 0) timeEl.textContent = 'vor ' + formatTimer(-diff);
-            else timeEl.textContent = 'in ' + formatTimer(diff);
+    function updateEarthRotation(dateMs) {
+        if (!state.earthMesh || !state.earthGroup) return;
+        const jd = (dateMs / 86400000) + 2440587.5;
+        const T = (jd - 2451545.0) / 36525;
+        const gmstDeg =
+            280.46061837 +
+            360.98564736629 * (jd - 2451545.0) +
+            0.000387933 * T * T -
+            (T * T * T) / 38710000;
+        // Greenwich starts on the texture's +X meridian, while the J2000
+        // reference direction in this display frame points along -Z.
+        state.earthRotationAngle = THREE.MathUtils.euclideanModulo(
+            EARTH_SIDEREAL_REFERENCE_OFFSET_RAD - THREE.MathUtils.degToRad(gmstDeg),
+            Math.PI * 2
+        );
+        state.earthMesh.rotation.y = state.earthRotationAngle;
+        if (state.earthCloudMesh) {
+            state.earthCloudMesh.rotation.y = state.earthRotationAngle * 1.025;
         }
     }
 
-    // ── Animation loop ──
-    function animate() {
-        requestAnimationFrame(animate);
-
-        const now = performance.now();
-        const dtReal = (now - lastFrameTime) / 1000;
-        lastFrameTime = now;
-
-        if (freeCameraMode) {
-            const dist = camera.position.distanceTo(controls.target);
-            const speed = THREE.MathUtils.clamp(dist * 0.12, 40, 120000) * dtReal;
-            const forward = new THREE.Vector3();
-            camera.getWorldDirection(forward);
-            const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
-            const move = new THREE.Vector3();
-            if (flyKeys.ArrowUp) move.addScaledVector(forward, speed);
-            if (flyKeys.ArrowDown) move.addScaledVector(forward, -speed);
-            if (flyKeys.ArrowLeft) move.addScaledVector(right, -speed);
-            if (flyKeys.ArrowRight) move.addScaledVector(right, speed);
-            if (move.lengthSq() > 0) {
-                camera.position.add(move);
-                controls.target.add(move);
-            }
-        }
-
-        if (!missionSliderDragging) {
-            simTime += dtReal * 1000 * timeWarp;
-        }
-        updateSolarSystem(sceneTimeMs());
-
-        const metHours = ARTEMIS2.getMET(sceneTimeMs());
-        const clampedMET = Math.max(0, Math.min(metHours, totalMET_hours));
-
-        if (earthMesh) {
-            earthMesh.rotation.y += (dtReal * timeWarp / 86400) * Math.PI * 2;
-        }
-
-        if (moonMesh) {
-            const moonPos = ARTEMIS2.getMoonPosition(clampedMET);
-            moonMesh.position.set(moonPos.x, moonPos.y, moonPos.z);
-            if (moonLabel) moonLabel.position.set(moonPos.x, moonPos.y + ARTEMIS2.MOON_RADIUS + 3, moonPos.z);
-        }
-
-        const orionPos = ARTEMIS2.interpolatePosition(clampedMET);
-        if (orionMarker) {
-            orionMarker.position.set(orionPos.x, orionPos.y, orionPos.z);
-            orionGlow.position.set(orionPos.x, orionPos.y, orionPos.z);
-            if (orionLabel) orionLabel.position.set(orionPos.x, orionPos.y + 5, orionPos.z);
-
-            const pulse = 0.2 + 0.1 * Math.sin(now * 0.003);
-            orionGlow.material.opacity = pulse;
-            orionGlow.scale.setScalar(1 + 0.15 * Math.sin(now * 0.004));
-        }
-
-        // Focus / camera follow
-        if (!freeCameraMode && focusedBody) {
-            const p = new THREE.Vector3();
-            if (focusedBody.kind === 'sun') p.copy(sunScenePos);
-            else if (focusedBody.kind === 'moon') p.copy(moonMesh.position);
-            else if (focusedBody.kind === 'planet') {
-                if (focusedBody.index === 2) p.set(0, 0, 0);
-                else p.copy(planetMeshByIndex[focusedBody.index].position);
-            }
-            controls.target.lerp(p, 0.12);
-        } else if (!freeCameraMode && followMoon && moonMesh) {
-            controls.target.lerp(moonMesh.position, 0.08);
-        } else if (!freeCameraMode && followOrion) {
-            controls.target.lerp(new THREE.Vector3(orionPos.x, orionPos.y, orionPos.z), 0.05);
-        }
-
-        // Distance-based visibility (Kamera ↔ OrbitControls-Target, nicht Ursprung)
-        const camTargetDist = camera.position.distanceTo(controls.target);
-        const showAllOrbits = camTargetDist >= ORBITS_ALL_DISTANCE;
-
-        if (focusedBody && !showAllOrbits) {
-            for (const obj of planetOrbits) obj.visible = false;
-            if (earthOrbitLine) earthOrbitLine.visible = false;
-            if (moonOrbitLine) moonOrbitLine.visible = false;
-            if (focusedBody.kind === 'sun') {
-                if (earthOrbitLine) earthOrbitLine.visible = true;
-            } else if (focusedBody.kind === 'moon') {
-                if (moonOrbitLine) moonOrbitLine.visible = true;
-            } else if (focusedBody.kind === 'planet') {
-                const line = planetOrbitByIndex[focusedBody.index];
-                if (line) line.visible = true;
-            }
-        } else {
-            for (const obj of planetOrbits) obj.visible = showAllOrbits;
-            if (earthOrbitLine) earthOrbitLine.visible = true;
-            if (moonOrbitLine) moonOrbitLine.visible = true;
-        }
-
-        if (zoomSliderEl && !zoomSliderDragging) {
-            zoomSliderEl.value = String(Math.round(distToSliderValue(camTargetDist) * 1000));
-        }
-        if (zoomReadoutEl) zoomReadoutEl.textContent = formatZoomReadout(camTargetDist);
-
-        // Earth orbit: finer dashes when zoomed in (dash size tracks view distance)
-        if (earthOrbitLine && earthOrbitLine.visible) {
-            const ref = camera.position.distanceTo(controls.target);
-            const dash = THREE.MathUtils.clamp(ref * 0.07, 18, 16000);
-            earthOrbitLine.material.dashSize = dash;
-            earthOrbitLine.material.gapSize = dash * 0.48;
-        }
-
-        // Scale labels proportionally to camera distance so they stay readable (~2× base)
-        for (const label of dynamicLabels) {
-            const d = camera.position.distanceTo(label.position);
-            const s = d * 0.08;
-            label.scale.set(s, s * 0.25, 1);
-            if (label._anchor && label._offsetY !== undefined) {
-                const oy = d * 0.012;
-                label.position.set(label._anchor.x, label._anchor.y + oy, label._anchor.z);
-            }
-        }
-
-        if (Math.floor(now / 200) !== Math.floor((now - dtReal * 1000) / 200)) {
-            updateTrajectoryLines(clampedMET);
-        }
-
-        updateUI(clampedMET);
-        syncMissionMetSlider();
-        controls.update();
-        renderer.render(scene, camera);
-    }
-
-    function onResize() {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    }
-
-    function distToSliderValue(dist) {
-        const d = Math.max(ZOOM_DIST_MIN, Math.min(ZOOM_DIST_MAX, dist));
+    function distToSliderValue(distance) {
+        const d = Math.max(ZOOM_DIST_MIN, Math.min(ZOOM_DIST_MAX, distance));
         const lo = Math.log(ZOOM_DIST_MIN);
         const hi = Math.log(ZOOM_DIST_MAX);
         return (Math.log(d) - lo) / (hi - lo);
@@ -1175,194 +3229,190 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         return Math.exp(lo + Math.max(0, Math.min(1, t)) * (hi - lo));
     }
 
-    function applyCameraZoomDistance(dist) {
-        const d = THREE.MathUtils.clamp(dist, ZOOM_DIST_MIN, ZOOM_DIST_MAX);
-        const target = controls.target;
-        const offset = camera.position.clone().sub(target);
+    function applyCameraZoomDistance(distance) {
+        const clamped = THREE.MathUtils.clamp(distance, ZOOM_DIST_MIN, ZOOM_DIST_MAX);
+        const offset = state.camera.position.clone().sub(state.controls.target);
         if (offset.lengthSq() < 1e-6) {
             offset.set(0.35, 0.25, 1).normalize();
         } else {
             offset.normalize();
         }
-        offset.multiplyScalar(d);
-        camera.position.copy(target).add(offset);
-        camera.updateProjectionMatrix();
+        offset.multiplyScalar(clamped);
+        state.camera.position.copy(state.controls.target).add(offset);
+        state.camera.updateProjectionMatrix();
     }
 
     function onZoomSliderInput() {
-        if (!zoomSliderEl) return;
-        const t = zoomSliderEl.valueAsNumber / 1000;
-        applyCameraZoomDistance(sliderValueToDist(t));
+        if (!dom['zoom-slider']) return;
+        applyCameraZoomDistance(sliderValueToDist(dom['zoom-slider'].valueAsNumber / 1000));
     }
 
-    function formatZoomReadout(dist) {
-        const km = dist * 1000;
-        if (km >= 1e6) return (km / 1e6).toFixed(2).replace('.', ',') + ' Mio km';
-        if (km >= 1000) return Math.round(km).toLocaleString('de-DE') + ' km';
-        return Math.round(km) + ' km';
+    function formatZoomReadout(distance) {
+        const km = distance * 1000;
+        if (km >= 1e6) return `${(km / 1e6).toFixed(2).replace('.', ',')} Mio km`;
+        if (km >= 1000) return `${Math.round(km).toLocaleString('de-DE')} km`;
+        return `${Math.round(km)} km`;
     }
 
-    function buildPickableList() {
-        pickableMeshes = [sunMesh, earthMesh, moonMesh];
-        for (let i = 0; i < 8; i++) {
-            if (planetMeshByIndex[i]) pickableMeshes.push(planetMeshByIndex[i]);
+    function onResize() {
+        state.camera.aspect = window.innerWidth / window.innerHeight;
+        state.camera.updateProjectionMatrix();
+        state.renderer.setSize(window.innerWidth, window.innerHeight);
+        if (isMobileViewport()) closeSettings();
+    }
+
+    function onKeyDown(event) {
+        if (state.freeCameraMode && Object.prototype.hasOwnProperty.call(state.flyKeys, event.key)) {
+            event.preventDefault();
+            state.flyKeys[event.key] = true;
         }
-        pickableMeshes.push(...extraPickableMeshes);
+        if (event.key === 'Escape') {
+            if (document.body.classList.contains('search-open')) {
+                closeSearch();
+                return;
+            }
+            if (document.body.classList.contains('settings-open')) {
+                closeSettings();
+                return;
+            }
+            if (state.freeCameraMode) {
+                exitFreeCamera();
+                return;
+            }
+            clearFocusModes();
+        }
     }
 
-    function jumpCameraToBody() {
-        if (!focusedBody) return;
-        const v = new THREE.Vector3();
-        let dist = 14000;
-        if (focusedBody.kind === 'sun') {
-            v.copy(sunScenePos);
-            dist = 220000;
-        } else if (focusedBody.kind === 'moon') {
-            v.copy(moonMesh.position);
-            dist = 9000;
-        } else {
-            const idx = focusedBody.index;
-            if (idx === 2) {
-                v.set(0, 0, 0);
-                dist = 20000;
-            } else {
-                const m = planetMeshByIndex[idx];
-                v.copy(m.position);
-                const r = m.geometry.parameters.radius;
-                dist = Math.max(r * 10, 14000);
+    function onKeyUp(event) {
+        if (state.freeCameraMode && Object.prototype.hasOwnProperty.call(state.flyKeys, event.key)) {
+            state.flyKeys[event.key] = false;
+        }
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        const now = performance.now();
+        const dtReal = (now - state.lastFrameTime) / 1000;
+        state.lastFrameTime = now;
+
+        if (state.freeCameraMode) {
+            const distance = state.camera.position.distanceTo(state.controls.target);
+            const speed = THREE.MathUtils.clamp(distance * 0.12, 40, 120000) * dtReal;
+            const forward = new THREE.Vector3();
+            state.camera.getWorldDirection(forward);
+            const right = new THREE.Vector3().crossVectors(forward, state.camera.up).normalize();
+            const move = new THREE.Vector3();
+            if (state.flyKeys.ArrowUp) move.addScaledVector(forward, speed);
+            if (state.flyKeys.ArrowDown) move.addScaledVector(forward, -speed);
+            if (state.flyKeys.ArrowLeft) move.addScaledVector(right, -speed);
+            if (state.flyKeys.ArrowRight) move.addScaledVector(right, speed);
+            if (move.lengthSq() > 0) {
+                state.camera.position.add(move);
+                state.controls.target.add(move);
             }
         }
-        controls.target.copy(v);
-        const off = new THREE.Vector3(1, 0.45, 0.92).normalize().multiplyScalar(dist);
-        camera.position.copy(v.clone().add(off));
-    }
 
-    function focusFromPick(kind, planetIndex) {
-        exitFreeCamera();
-        followOrion = false;
-        followMoon = false;
-        document.getElementById('follow-btn').classList.remove('active');
-        document.getElementById('moon-btn').classList.remove('active');
-        if (kind === 'sun') focusedBody = { kind: 'sun' };
-        else if (kind === 'moon') focusedBody = { kind: 'moon' };
-        else focusedBody = { kind: 'planet', index: planetIndex };
-        jumpCameraToBody();
-    }
-
-    function onSceneClick(event) {
-        if (event.button !== 0) return;
-        const rect = renderer.domElement.getBoundingClientRect();
-        pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        pointerNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        raycaster.setFromCamera(pointerNdc, camera);
-        const hits = raycaster.intersectObjects(pickableMeshes, false);
-        if (hits.length === 0) return;
-        const u = hits[0].object.userData;
-        if (u.pickKind === 'sun') focusFromPick('sun');
-        else if (u.pickKind === 'moon') focusFromPick('moon');
-        else if (u.pickKind === 'planet' && u.planetIndex !== undefined) focusFromPick('planet', u.planetIndex);
-    }
-
-    function onKeyUp(e) {
-        if (freeCameraMode && Object.prototype.hasOwnProperty.call(flyKeys, e.key)) {
-            flyKeys[e.key] = false;
+        if (!state.missionSliderDragging) {
+            state.simTime += dtReal * 1000 * state.timeWarp;
         }
+
+        updateSolarSystem(sceneTimeMs());
+        updateEarthRotation(earthReferenceTimeMs());
+
+        const rawMet = ARTEMIS.getMET(sceneTimeMs());
+        const clampedMet = THREE.MathUtils.clamp(rawMet, 0, state.totalMissionHours);
+        const moonMet = Number.isFinite(rawMet) ? rawMet : 0;
+
+        const moonPos = ARTEMIS.getMoonPosition(moonMet);
+        state.moonMesh.position.set(moonPos.x, moonPos.y, moonPos.z);
+        state.moonLabel.position.set(moonPos.x, moonPos.y + ARTEMIS.MOON_RADIUS + 3, moonPos.z);
+
+        if (state.artemisReplayEnabled) {
+            const orionPos = ARTEMIS.interpolatePosition(clampedMet);
+            state.orionMarker.position.set(orionPos.x, orionPos.y, orionPos.z);
+            state.orionGlow.position.set(orionPos.x, orionPos.y, orionPos.z);
+            state.orionLabel.position.set(orionPos.x, orionPos.y + 5, orionPos.z);
+            state.orionGlow.material.opacity = 0.18 + 0.09 * Math.sin(now * 0.003);
+            state.orionGlow.scale.setScalar(1 + 0.18 * Math.sin(now * 0.004));
+            if (Math.floor(now / 180) !== Math.floor((now - dtReal * 1000) / 180)) {
+                updateTrajectoryLines(clampedMet);
+            }
+        }
+
+        if (!state.freeCameraMode) {
+            if (state.followSatelliteId) {
+                const satelliteWorld = getSatelliteWorldPosition(state.followSatelliteId);
+                if (satelliteWorld) {
+                    const previousTarget = state.controls.target.clone();
+                    state.controls.target.lerp(satelliteWorld, 0.32);
+                    state.camera.position.add(state.controls.target.clone().sub(previousTarget));
+                }
+            } else if (!state.userNavigatingCamera && state.focusedBody) {
+                const target = new THREE.Vector3();
+                if (state.focusedBody.kind === 'sun') target.copy(state.sunScenePos);
+                else if (state.focusedBody.kind === 'planet') {
+                    const idx = state.focusedBody.index;
+                    if (idx === 2) target.set(0, 0, 0);
+                    else target.copy(state.planetMeshes[idx].position);
+                }
+                state.controls.target.lerp(target, 0.12);
+            } else if (!state.userNavigatingCamera && state.followObserver) {
+                const observerWorld = getObserverWorldPosition();
+                if (observerWorld) state.controls.target.lerp(observerWorld, 0.12);
+            } else if (!state.userNavigatingCamera && state.followMoon) {
+                state.controls.target.lerp(state.moonMesh.position, 0.1);
+            } else if (!state.userNavigatingCamera && state.followOrion && state.artemisReplayEnabled) {
+                state.controls.target.lerp(state.orionMarker.position, 0.08);
+            }
+        }
+
+        const camTargetDist = state.camera.position.distanceTo(state.controls.target);
+        const showAllOrbits = camTargetDist >= ORBITS_ALL_DISTANCE;
+        state.planetOrbitList.forEach((line) => { line.visible = showAllOrbits; });
+        if (state.planetOrbits[2]) state.planetOrbits[2].visible = true;
+        if (state.moonOrbitLine) state.moonOrbitLine.visible = true;
+
+        if (state.planetOrbits[2] && state.planetOrbits[2].visible) {
+            const dash = THREE.MathUtils.clamp(camTargetDist * 0.07, 18, 16000);
+            state.planetOrbits[2].material.dashSize = dash;
+            state.planetOrbits[2].material.gapSize = dash * 0.48;
+        }
+
+        if (!state.zoomSliderDragging && dom['zoom-slider']) {
+            dom['zoom-slider'].value = String(Math.round(distToSliderValue(camTargetDist) * 1000));
+        }
+        dom['zoom-readout'].textContent = formatZoomReadout(camTargetDist);
+        const localNow = new Date();
+        if (dom['real-time-zone']) {
+            dom['real-time-zone'].textContent = getLocalTimeZoneLabel(localNow);
+        }
+        dom['real-time-berlin'].textContent = localTimeOnly.format(localNow);
+
+        state.dynamicLabels.forEach((label) => {
+            const distance = state.camera.position.distanceTo(label.position);
+            const scale = distance * 0.08;
+            label.scale.set(scale, scale * 0.25, 1);
+            if (label._anchor && label._offsetY !== undefined) {
+                const offsetY = distance * 0.012;
+                label.position.set(label._anchor.x, label._anchor.y + offsetY, label._anchor.z);
+            }
+        });
+
+        updateLaunchMarkers(now);
+        updateObserverMarker();
+        if (state.observerPulse) {
+            const pulseScale = 1 + 0.22 * Math.sin(now * 0.006);
+            state.observerPulse.scale.setScalar(pulseScale);
+            state.observerPulse.material.opacity = 0.11 + 0.08 * (0.5 + 0.5 * Math.sin(now * 0.006));
+        }
+        updateSatelliteHighlight(now);
+        propagateSatellites();
+        updateArtemisPanel(clampedMet);
+        syncMissionSlider();
+        state.controls.update();
+        state.renderer.render(state.scene, state.camera);
     }
-
-    function onKeyDown(e) {
-        if (freeCameraMode && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-            e.preventDefault();
-            flyKeys[e.key] = true;
-        }
-        if (e.key === 'Escape') {
-            if (freeCameraMode) exitFreeCamera();
-            else clearFollowModes();
-        }
-        if (e.key === 'h' || e.key === 'H') {
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
-            const t = e.target;
-            if (t && (t.closest && (t.closest('input, textarea, select') || t.isContentEditable))) return;
-            e.preventDefault();
-            toggleAllPanels();
-        }
-    }
-
-    // ── Controls ──
-    function clearFollowModes() {
-        followOrion = false;
-        followMoon = false;
-        focusedBody = null;
-        document.getElementById('follow-btn').classList.remove('active');
-        document.getElementById('moon-btn').classList.remove('active');
-    }
-
-    function exitFreeCamera() {
-        if (!freeCameraMode) return;
-        freeCameraMode = false;
-        controls.enabled = true;
-        controls.enablePan = true;
-        const fb = document.getElementById('free-cam-btn');
-        if (fb) fb.classList.remove('active');
-        Object.keys(flyKeys).forEach((k) => { flyKeys[k] = false; });
-    }
-
-    window.toggleFreeCamera = function () {
-        freeCameraMode = !freeCameraMode;
-        const btn = document.getElementById('free-cam-btn');
-        if (btn) btn.classList.toggle('active', freeCameraMode);
-        controls.enabled = true;
-        controls.enablePan = !freeCameraMode;
-        if (freeCameraMode) {
-            clearFollowModes();
-            Object.keys(flyKeys).forEach((k) => { flyKeys[k] = false; });
-        } else {
-            Object.keys(flyKeys).forEach((k) => { flyKeys[k] = false; });
-        }
-    };
-
-    window.toggleFollow = function () {
-        exitFreeCamera();
-        followOrion = !followOrion;
-        if (followOrion) {
-            focusedBody = null;
-            followMoon = false;
-            document.getElementById('moon-btn').classList.remove('active');
-        }
-        document.getElementById('follow-btn').classList.toggle('active', followOrion);
-        if (!followOrion) controls.target.set(0, 0, 0);
-    };
-
-    window.toggleMoonView = function () {
-        exitFreeCamera();
-        followMoon = !followMoon;
-        if (followMoon) {
-            focusedBody = null;
-            followOrion = false;
-            document.getElementById('follow-btn').classList.remove('active');
-        }
-        document.getElementById('moon-btn').classList.toggle('active', followMoon);
-        if (!followMoon) controls.target.set(0, 0, 0);
-    };
-
-    window.resetView = function () {
-        exitFreeCamera();
-        camera.position.set(0, 250, 450);
-        controls.target.set(0, 0, 0);
-        clearFollowModes();
-    };
-
-    window.solarSystemView = function () {
-        exitFreeCamera();
-        clearFollowModes();
-        controls.target.copy(sunScenePos);
-        camera.position.set(sunScenePos.x, 7000000, sunScenePos.z + 100000);
-    };
-
-    window.jumpToNow = function () {
-        simTime = Date.now();
-        warpToOne();
-        clearFollowModes();
-    };
 
     window.addEventListener('DOMContentLoaded', init);
 })();

@@ -1,0 +1,20 @@
+{
+  "generatedAt": null,
+  "source": "launch-db",
+  "timezone": "Europe/Berlin",
+  "week": {
+    "current": 0,
+    "previous": null,
+    "delta": null
+  },
+  "month": {
+    "current": 0,
+    "previous": null,
+    "delta": null
+  },
+  "year": {
+    "current": 0,
+    "previous": null,
+    "delta": null
+  }
+}

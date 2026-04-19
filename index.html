@@ -3,1184 +3,365 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Artemis 2 Mission Observer</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            background: #000;
-            color: #e0e0e0;
-            font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-            overflow: hidden;
-            user-select: none;
-        }
-
-        #canvas-container {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100vw; height: 100vh;
-        }
-
-        /* ── Overlay panels ── */
-        .panel {
-            position: fixed;
-            background: rgba(5, 10, 25, 0.85);
-            border: 1px solid rgba(0, 180, 255, 0.25);
-            border-radius: 10px;
-            padding: 16px 20px;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            z-index: 10;
-        }
-
-        /* Oben links: ein Panel — Mission, kompakter Zeitstrahl, Legende */
-        #info-panel {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            z-index: 10;
-            width: 100%;
-            max-width: 260px;
-            max-height: calc(100vh - 36px);
-            padding: 10px 36px 12px 12px;
-            display: flex;
-            flex-direction: column;
-            overflow-x: hidden;
-            overflow-y: auto;
-        }
-
-        #info-panel .panel-collapse-btn {
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            z-index: 2;
-        }
-
-        #info-panel .mission-block {
-            flex-shrink: 0;
-        }
-
-        .mission-title {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            color: #0af;
-            margin-bottom: 2px;
-            font-weight: 600;
-        }
-
-        .mission-name {
-            font-size: 17px;
-            font-weight: 700;
-            color: #fff;
-            margin-bottom: 6px;
-            line-height: 1.2;
-        }
-
-        #met-clock {
-            font-size: 21px;
-            font-weight: 700;
-            font-family: 'Consolas', 'Courier New', monospace;
-            color: #0f6;
-            letter-spacing: 0.5px;
-        }
-
-        #phase-name {
-            font-size: 12px;
-            color: #8cf;
-            margin-top: 4px;
-            font-weight: 500;
-        }
-
-        .realtime-label {
-            font-size: 9px;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            color: #68a;
-            margin-top: 8px;
-            margin-bottom: 2px;
-        }
-
-        #real-time-mez {
-            font-size: 12px;
-            font-weight: 600;
-            font-family: 'Consolas', 'Courier New', monospace;
-            color: #cde;
-            letter-spacing: 0.3px;
-        }
-
-        /* Zeitstrahl im oberen Panel — niedrige Höhe, intern scrollbar */
-        #info-panel #timeline-panel {
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid rgba(0, 180, 255, 0.2);
-            flex: 0 1 auto;
-            min-height: 0;
-            max-height: 200px;
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding-right: 2px;
-        }
-
-        #info-panel #timeline-panel .tl-title {
-            margin-bottom: 6px;
-        }
-
-        #info-panel #timeline-panel .tl-item {
-            padding: 4px 0;
-        }
-
-        #info-panel #timeline-panel .tl-line {
-            min-height: 14px;
-        }
-
-        #info-panel #timeline-panel .tl-name {
-            font-size: 10px;
-        }
-
-        #info-panel #timeline-panel .tl-item.active .tl-name {
-            font-size: 11px;
-        }
-
-        #info-panel #timeline-panel::-webkit-scrollbar { width: 3px; }
-        #info-panel #timeline-panel::-webkit-scrollbar-thumb {
-            background: rgba(0, 150, 255, 0.35);
-            border-radius: 2px;
-        }
-
-        #info-panel #legend {
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid rgba(0, 180, 255, 0.2);
-            pointer-events: none;
-            flex-shrink: 0;
-        }
-
-        /* Telemetrie im linken Panel — zwischen Zeitstrahl und Legende */
-        #info-panel #telemetry-panel {
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid rgba(0, 180, 255, 0.2);
-            flex-shrink: 0;
-            text-align: left;
-        }
-
-        #info-panel #telemetry-panel .telem-row:last-child {
-            margin-bottom: 0;
-        }
-
-        .telem-row {
-            margin-bottom: 8px;
-        }
-
-        .telem-label {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            color: #68a;
-            margin-bottom: 2px;
-        }
-
-        #info-panel #telemetry-panel .telem-value {
-            font-size: 16px;
-        }
-
-        .telem-value {
-            font-size: 20px;
-            font-weight: 600;
-            font-family: 'Consolas', 'Courier New', monospace;
-        }
-
-        #dist-earth { color: #4df; }
-        #dist-moon { color: #ccc; }
-        #velocity { color: #f84; }
-
-        .telem-imperial {
-            font-size: 11px;
-            color: #556;
-            font-family: 'Consolas', 'Courier New', monospace;
-            margin-top: 1px;
-        }
-
-        /* Rechts oben: News-Feed */
-        #launch-feed-panel {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            width: 300px;
-            max-height: calc(100vh - 40px);
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            z-index: 10;
-            padding: 12px 14px;
-        }
-
-        #launch-feed-panel .launch-head {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 6px;
-        }
-
-        #launch-feed-panel .launch-head .lf-header {
-            margin-bottom: 0;
-        }
-
-        #launch-feed-panel .lf-header {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            color: #68a;
-            margin-bottom: 6px;
-        }
-
-        #launch-feed-panel .lf-title {
-            font-size: 14px;
-            font-weight: 700;
-            color: #eaf;
-            margin-bottom: 4px;
-        }
-
-        #launch-feed-panel .lf-source {
-            font-size: 9px;
-            color: #556;
-            margin-bottom: 10px;
-            line-height: 1.35;
-        }
-
-        #launch-feed-status {
-            font-size: 9px;
-            color: #567;
-            margin-bottom: 8px;
-        }
-
-        #launch-feed-items {
-            overflow-y: auto;
-            flex: 1;
-            padding-right: 4px;
-            min-height: 80px;
-        }
-
-        #launch-feed-items::-webkit-scrollbar { width: 3px; }
-        #launch-feed-items::-webkit-scrollbar-thumb { background: rgba(180,100,255,0.35); border-radius: 2px; }
-
-        /* Unten rechts: YouTube-Livestream (über Fortschrittsleiste & Steuerung) */
-        #livestream-panel {
-            position: fixed;
-            bottom: 155px;
-            right: 24px;
-            width: min(360px, calc(100vw - 48px));
-            padding: 8px 10px 10px;
-            z-index: 11;
-            max-width: calc(100vw - 48px);
-        }
-
-        #livestream-panel .livestream-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            color: #8ac;
-            margin-bottom: 6px;
-            padding: 4px 4px 4px 8px;
-            margin: -6px -6px 6px -6px;
-            border-radius: 6px;
-            user-select: none;
-            -webkit-user-select: none;
-        }
-
-        #livestream-panel .livestream-drag-handle {
-            flex: 1;
-            cursor: grab;
-            touch-action: none;
-            padding: 4px 0;
-        }
-
-        #livestream-panel .livestream-drag-handle:hover {
-            background: rgba(0, 140, 220, 0.12);
-            border-radius: 4px;
-        }
-
-        #livestream-panel .livestream-drag-handle:active {
-            cursor: grabbing;
-        }
-
-        #livestream-panel .livestream-collapse-btn {
-            flex-shrink: 0;
-            margin: 0;
-        }
-
-        #livestream-panel .livestream-frame-wrap {
-            position: relative;
-            width: 100%;
-            padding-bottom: 56.25%;
-            height: 0;
-            overflow: hidden;
-            border-radius: 8px;
-            background: #000;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
-        }
-
-        #livestream-panel .livestream-frame-wrap iframe {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            border: 0;
-        }
-
-        .launch-item {
-            border-bottom: 1px solid rgba(0, 150, 255, 0.12);
-            padding: 10px 0;
-        }
-
-        .launch-item:last-child { border-bottom: none; }
-
-        .launch-name {
-            font-size: 12px;
-            font-weight: 600;
-            color: #e8f0ff;
-            line-height: 1.35;
-            margin-bottom: 4px;
-        }
-
-        .launch-org {
-            font-size: 10px;
-            font-weight: 600;
-            color: #9ab;
-            letter-spacing: 0.2px;
-            margin-bottom: 4px;
-            line-height: 1.3;
-        }
-
-        .launch-meta {
-            font-size: 10px;
-            color: #789;
-            line-height: 1.4;
-        }
-
-        .launch-countdown {
-            font-size: 11px;
-            font-family: 'Consolas', 'Courier New', monospace;
-            color: #fa0;
-            margin-top: 6px;
-            font-weight: 600;
-        }
-
-        .launch-net {
-            font-size: 9px;
-            color: #556;
-            margin-top: 3px;
-        }
-
-        .launch-error {
-            font-size: 11px;
-            color: #c88;
-            line-height: 1.45;
-        }
-
-        .lf-refresh {
-            font-size: 10px;
-            color: #6ad;
-            cursor: pointer;
-            text-decoration: underline;
-            margin-top: 6px;
-            display: inline-block;
-        }
-
-        .lf-refresh:hover { color: #8cf; }
-
-        .tl-title {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            color: #68a;
-            margin-bottom: 10px;
-        }
-
-        .tl-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            margin-bottom: 0;
-            padding: 6px 0;
-            position: relative;
-        }
-
-        .tl-track {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            width: 12px;
-            flex-shrink: 0;
-        }
-
-        .tl-dot {
-            width: 8px; height: 8px;
-            border-radius: 50%;
-            background: #334;
-            border: 1.5px solid #445;
-            flex-shrink: 0;
-            z-index: 1;
-        }
-
-        .tl-line {
-            width: 1.5px;
-            flex-grow: 1;
-            min-height: 20px;
-            background: #223;
-        }
-
-        .tl-item.done .tl-dot { background: #0a8; border-color: #0a8; }
-        .tl-item.done .tl-line { background: rgba(0,170,128,0.3); }
-        .tl-item.active .tl-dot {
-            background: #0ff; border-color: #0ff;
-            box-shadow: 0 0 8px rgba(0,255,255,0.6);
-        }
-        .tl-item.active .tl-line { background: linear-gradient(to bottom, rgba(0,255,255,0.3), #223); }
-        .tl-item.future .tl-dot { background: #223; border-color: #445; }
-
-        .tl-content { flex: 1; min-width: 0; padding-top: 0; }
-
-        .tl-name {
-            font-size: 11px;
-            color: #667;
-            line-height: 1.3;
-        }
-        .tl-item.done .tl-name { color: #6a8; }
-        .tl-item.active .tl-name { color: #fff; font-weight: 600; font-size: 12px; }
-
-        .tl-time {
-            font-size: 9px;
-            font-family: 'Consolas', monospace;
-            color: #445;
-            margin-top: 1px;
-        }
-        .tl-item.done .tl-time { color: #567; }
-        .tl-item.active .tl-time { color: #fa0; font-size: 11px; font-weight: 700; }
-
-        /* Bottom: Controls */
-        #controls-panel {
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            flex-direction: column;
-            align-items: stretch;
-            gap: 10px;
-            padding: 36px 24px 12px 24px;
-            max-width: min(96vw, 920px);
-        }
-
-        #controls-panel .panel-collapse-btn {
-            position: absolute;
-            top: 8px;
-            right: 10px;
-            z-index: 2;
-        }
-
-        .ctrl-mode-tabs {
-            display: flex;
-            gap: 0;
-            margin: 0 40px 10px 0;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid rgba(0, 150, 255, 0.35);
-            align-self: center;
-        }
-
-        .ctrl-tab {
-            padding: 8px 20px;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1.2px;
-            border: none;
-            cursor: pointer;
-            background: rgba(0, 40, 80, 0.4);
-            color: #8ac;
-            font-family: inherit;
-            transition: background 0.15s, color 0.15s;
-        }
-
-        .ctrl-tab:hover {
-            color: #cef;
-            background: rgba(0, 60, 100, 0.5);
-        }
-
-        .ctrl-tab.active {
-            background: rgba(0, 140, 220, 0.35);
-            color: #fff;
-            box-shadow: inset 0 0 12px rgba(0, 180, 255, 0.2);
-        }
-
-        .controls-section {
-            width: 100%;
-        }
-
-        .warp-triple {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-
-        .warp-triple .warp-btn {
-            min-width: 72px;
-        }
-
-        .warp-triple .warp-center {
-            min-width: 56px;
-            font-weight: 800;
-        }
-
-        .controls-row {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-
-        .zoom-row {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-            justify-content: center;
-            padding-bottom: 4px;
-            border-bottom: 1px solid rgba(0, 150, 255, 0.15);
-        }
-
-        #zoom-slider {
-            flex: 1;
-            min-width: 160px;
-            max-width: 340px;
-            height: 6px;
-            accent-color: #0af;
-            cursor: pointer;
-        }
-
-        #zoom-readout {
-            font-family: 'Consolas', 'Courier New', monospace;
-            font-size: 11px;
-            color: #8ac;
-            min-width: 100px;
-            text-align: right;
-        }
-
-        .ctrl-group {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .ctrl-label {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            color: #68a;
-            margin-right: 4px;
-        }
-
-        #controls-section-time {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-
-        .time-now-row {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 0 0 6px 0;
-            margin: 0;
-            border-bottom: 1px solid rgba(0, 150, 255, 0.12);
-        }
-
-        .time-now-row .action-btn {
-            padding: 4px 14px;
-            font-size: 11px;
-        }
-
-        .time-warp-block {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-wrap: wrap;
-            gap: 6px;
-        }
-
-        .mission-scrub-details {
-            width: 100%;
-            border-top: 1px solid rgba(0, 150, 255, 0.12);
-            padding-top: 4px;
-            margin-top: 2px;
-        }
-
-        .mission-scrub-details summary {
-            font-size: 9px;
-            text-transform: uppercase;
-            letter-spacing: 1.2px;
-            color: #68a;
-            cursor: pointer;
-            user-select: none;
-            list-style: none;
-            padding: 2px 0;
-        }
-
-        .mission-scrub-details summary::-webkit-details-marker { display: none; }
-
-        .mission-scrub-inner {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 4px;
-            padding-bottom: 2px;
-        }
-
-        #mission-met-slider {
-            flex: 1;
-            min-width: 140px;
-            max-width: 100%;
-            height: 6px;
-            accent-color: #0f8;
-            cursor: pointer;
-        }
-
-        #mission-met-readout {
-            font-family: 'Consolas', 'Courier New', monospace;
-            font-size: 10px;
-            color: #6c9;
-            min-width: 140px;
-        }
-
-        .warp-btn.warp-reverse {
-            border-color: rgba(255, 120, 80, 0.35);
-            color: #eca;
-        }
-
-        .warp-btn.warp-reverse:hover {
-            background: rgba(255, 100, 60, 0.12);
-            border-color: rgba(255, 140, 100, 0.5);
-        }
-
-        .warp-btn, .action-btn {
-            background: rgba(0, 150, 255, 0.1);
-            border: 1px solid rgba(0, 150, 255, 0.3);
-            color: #acd;
-            padding: 6px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 12px;
-            font-weight: 600;
-            transition: all 0.2s;
-            font-family: inherit;
-        }
-
-        .warp-btn:hover, .action-btn:hover {
-            background: rgba(0, 150, 255, 0.25);
-            border-color: rgba(0, 180, 255, 0.6);
-            color: #fff;
-        }
-
-        .warp-btn.active {
-            background: rgba(0, 180, 255, 0.35);
-            border-color: #0af;
-            color: #fff;
-            box-shadow: 0 0 10px rgba(0, 170, 255, 0.3);
-        }
-
-        .action-btn.active {
-            background: rgba(0, 255, 140, 0.2);
-            border-color: rgba(0, 255, 140, 0.5);
-            color: #0f8;
-        }
-
-        .separator {
-            width: 1px;
-            height: 24px;
-            background: rgba(0, 150, 255, 0.2);
-            margin: 0 6px;
-        }
-
-        /* Progress bar */
-        #progress-bar {
-            position: fixed;
-            bottom: 125px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 500px;
-            max-width: 80vw;
-            height: 4px;
-            background: rgba(255, 255, 255, 0.08);
-            border-radius: 2px;
-            z-index: 10;
-        }
-
-        #progress-fill {
-            height: 100%;
-            width: 0%;
-            background: linear-gradient(90deg, #0af, #0f6);
-            border-radius: 2px;
-            transition: width 0.3s;
-        }
-
-        #warp-display {
-            font-family: 'Consolas', monospace;
-            color: #ff8;
-            font-size: 14px;
-            font-weight: 700;
-            min-width: 72px;
-            text-align: center;
-        }
-
-        #legend {
-            font-size: 10px;
-            text-align: left;
-        }
-
-        .legend-item {
-            display: flex;
-            align-items: center;
-            justify-content: flex-start;
-            gap: 6px;
-            margin-bottom: 3px;
-            color: #889;
-        }
-
-        .legend-item:last-child { margin-bottom: 0; }
-
-        .legend-color {
-            width: 16px;
-            height: 2px;
-            border-radius: 2px;
-            flex-shrink: 0;
-        }
-
-        .legend-color.past { background: #0df; }
-        .legend-color.future {
-            background: repeating-linear-gradient(
-                90deg, #fff 0px, #fff 4px, transparent 4px, transparent 8px
-            );
-            opacity: 0.4;
-        }
-        .legend-color.orion {
-            width: 7px; height: 7px;
-            border-radius: 50%;
-            background: #0fa;
-            box-shadow: 0 0 4px #0fa;
-        }
-        .legend-color.moonorbit {
-            background: repeating-linear-gradient(
-                90deg, #c8d8e8 0px, #c8d8e8 3px, transparent 3px, transparent 6px
-            );
-            opacity: 0.75;
-        }
-        .legend-color.npole {
-            width: 14px; height: 2px;
-            background: #f44;
-            border-radius: 1px;
-        }
-        .legend-color.sun {
-            width: 7px; height: 7px;
-            border-radius: 50%;
-            background: #ffe888;
-            box-shadow: 0 0 4px #ffcc44;
-        }
-        .legend-color.earthorbit {
-            background: repeating-linear-gradient(
-                90deg, #fa4 0px, #fa4 3px, transparent 3px, transparent 6px
-            );
-            opacity: 0.4;
-        }
-
-        /* Panel-Sichtbarkeit (Klassen am body, gesteuert von app.js) */
-        body.ui-hide-info #info-panel { display: none !important; }
-        body.ui-hide-launch #launch-feed-panel { display: none !important; }
-        body.ui-hide-controls #controls-panel,
-        body.ui-hide-controls #progress-bar { display: none !important; }
-
-        /* Ausblenden — je Panel oben rechts */
-        .panel-collapse-btn {
-            flex-shrink: 0;
-            width: 26px;
-            height: 26px;
-            padding: 0;
-            line-height: 24px;
-            font-size: 17px;
-            font-weight: 400;
-            color: #8ac;
-            background: rgba(0, 40, 60, 0.45);
-            border: 1px solid rgba(0, 180, 255, 0.28);
-            border-radius: 6px;
-            cursor: pointer;
-            user-select: none;
-            -webkit-tap-highlight-color: transparent;
-            transition: color 0.15s, border-color 0.15s, background 0.15s;
-        }
-
-        .panel-collapse-btn:hover {
-            color: #cef;
-            border-color: rgba(0, 200, 255, 0.5);
-            background: rgba(0, 60, 90, 0.55);
-        }
-
-        /* Wieder einblenden — schmale Leiste am Rand (nur wenn Panel aus) */
-        .panel-restore-tab {
-            display: none;
-            position: fixed;
-            z-index: 100;
-            font-size: 11px;
-            font-family: inherit;
-            padding: 8px 10px;
-            color: #8ac;
-            background: rgba(5, 10, 25, 0.92);
-            border: 1px solid rgba(0, 180, 255, 0.35);
-            cursor: pointer;
-            user-select: none;
-            -webkit-tap-highlight-color: transparent;
-            transition: color 0.15s, border-color 0.15s;
-        }
-
-        .panel-restore-tab:hover {
-            color: #cef;
-            border-color: rgba(0, 200, 255, 0.55);
-        }
-
-        body.ui-hide-info #panel-restore-info { display: block; }
-        body.ui-hide-launch #panel-restore-launch { display: block; }
-        body.ui-hide-controls #panel-restore-controls { display: block; }
-        body.ui-hide-livestream #livestream-panel { display: none !important; }
-        body.ui-hide-livestream #panel-restore-live { display: block; }
-
-        #panel-restore-live {
-            right: 0;
-            top: 72px;
-            border-radius: 8px 0 0 8px;
-            border-right: none;
-        }
-
-        #panel-restore-info {
-            left: 0;
-            top: 24px;
-            border-radius: 0 8px 8px 0;
-            border-left: none;
-        }
-
-        #panel-restore-launch {
-            right: 0;
-            top: 24px;
-            border-radius: 8px 0 0 8px;
-            border-right: none;
-        }
-
-        #panel-restore-controls {
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            border-radius: 8px 8px 0 0;
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            #info-panel { padding: 12px 36px 12px 14px; }
-            .mission-name { font-size: 17px; }
-            #met-clock { font-size: 22px; }
-            #info-panel #telemetry-panel .telem-value { font-size: 15px; }
-            .telem-value { font-size: 16px; }
-            .telem-imperial { font-size: 9px; }
-            #controls-panel { padding: 32px 16px 10px 16px; gap: 6px; }
-            .warp-btn, .action-btn { padding: 5px 8px; font-size: 11px; }
-            #info-panel #legend { display: none; }
-            #livestream-panel {
-                width: min(260px, calc(100vw - 20px));
-                right: 10px;
-                bottom: 148px;
-            }
-        }
-    </style>
+    <title>Civilization Observer</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+    <div id="canvas-container" aria-hidden="true"></div>
 
-    <div id="canvas-container"></div>
+    <header id="topbar">
+        <div class="brand-stack">
+            <h1>Civilization Observer</h1>
+        </div>
+        <div class="topbar-side">
+            <div class="topbar-time">
+                <span class="small-label" id="real-time-zone">MEZ</span>
+                <strong id="real-time-berlin">--</strong>
+            </div>
+            <button type="button" class="icon-btn" id="search-toggle" aria-label="Satelliten suchen">&#128269;</button>
+            <button type="button" class="icon-btn settings-gear-btn" id="settings-toggle" aria-label="Einstellungen">&#9881;</button>
+        </div>
+    </header>
 
-    <!-- Daten: Mission, Zeitstrahl, Telemetrie, Legende -->
-    <div class="panel" id="info-panel">
-        <button type="button" class="panel-collapse-btn" data-panel="info" title="Daten ausblenden (Taste H: alle)" aria-label="Daten ausblenden">−</button>
-        <div class="mission-block">
-            <div class="mission-title">NASA Artemis Programm</div>
-            <div class="mission-name">Artemis II - Orion</div>
-            <div style="font-size:8px;color:#567;margin-bottom:6px;">Quelle: NASA/JSC Ephemeris (OEM)</div>
-            <div id="met-clock">T+ 0d 00:00:00</div>
-            <div id="phase-name">Initialisierung...</div>
-            <div class="realtime-label">Datum &amp; Uhrzeit (MEZ)</div>
-            <div id="real-time-mez">--</div>
+    <aside class="panel" id="overview-panel">
+        <div class="panel-head">
+            <div>
+                <div class="section-kicker">Launch Watch</div>
+                <h3 id="watch-launch-title">Ausgewaehlter Start</h3>
+                <div class="watch-subtitle" id="watch-launch-subtitle">--</div>
+            </div>
+            <button type="button" class="panel-arrow" data-ui-toggle="watch" aria-label="Launch Watch ein- oder ausblenden">&#8249;</button>
         </div>
-        <div id="timeline-panel">
-            <div class="tl-title">Missions-Zeitstrahl</div>
-            <div id="timeline-items"></div>
-        </div>
-        <div id="telemetry-panel">
-            <div class="telem-row">
-                <div class="telem-label">Entfernung zur Erde</div>
-                <div class="telem-value" id="dist-earth">-- km</div>
-                <div class="telem-imperial" id="dist-earth-mi">-- mi</div>
-            </div>
-            <div class="telem-row">
-                <div class="telem-label">Abstand zum Mond</div>
-                <div class="telem-value" id="dist-moon">-- km</div>
-                <div class="telem-imperial" id="dist-moon-mi">-- mi</div>
-            </div>
-            <div class="telem-row">
-                <div class="telem-label">Geschwindigkeit</div>
-                <div class="telem-value" id="velocity">-- km/s</div>
-                <div class="telem-imperial" id="velocity-mi">-- mph</div>
-            </div>
-        </div>
-        <div id="legend">
-            <div class="legend-item">
-                <div class="legend-color orion"></div>
-                <span>Orion-Kapsel</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-color past"></div>
-                <span>Bisherige Flugspur</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-color future"></div>
-                <span>Geplante Route</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-color moonorbit"></div>
-                <span>Mondumlaufbahn</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-color npole"></div>
-                <span>Erdachse (N/S)</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-color sun"></div>
-                <span>Sonne + Planeten</span>
-            </div>
-        </div>
-    </div>
 
-    <!-- Rocket launches (rechts oben) -->
-    <div class="panel" id="launch-feed-panel">
-        <div class="launch-head">
-            <div class="lf-header">News</div>
-            <button type="button" class="panel-collapse-btn" data-panel="launch" title="News ausblenden (Taste H: alle)" aria-label="News-Panel ausblenden">−</button>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="small-label">Getrackte Starts</div>
+                <strong id="launch-stat-total">--</strong>
+            </div>
+            <div class="stat-card">
+                <div class="small-label">Naechster Countdown</div>
+                <strong id="launch-stat-countdown">--</strong>
+            </div>
+            <div class="stat-card">
+                <div class="small-label">Anbieter</div>
+                <strong id="launch-stat-orgs">--</strong>
+            </div>
+            <div class="stat-card">
+                <div class="small-label">Pads</div>
+                <strong id="launch-stat-pads">--</strong>
+            </div>
+            <div class="stat-card">
+                <div class="small-label">Erfolgreich Woche</div>
+                <strong id="launch-stat-success-week">--</strong>
+                <span class="stat-delta" id="launch-stat-success-week-delta">--</span>
+            </div>
+            <div class="stat-card">
+                <div class="small-label">Erfolgreich Monat</div>
+                <strong id="launch-stat-success-month">--</strong>
+                <span class="stat-delta" id="launch-stat-success-month-delta">--</span>
+            </div>
+            <div class="stat-card">
+                <div class="small-label">Erfolgreich Jahr</div>
+                <strong id="launch-stat-success-year">--</strong>
+                <span class="stat-delta" id="launch-stat-success-year-delta">--</span>
+            </div>
+            <div class="stat-card">
+                <div class="small-label">Satelliten im Orbit</div>
+                <strong id="sat-stat-total">--</strong>
+            </div>
+            <div class="stat-card">
+                <div class="small-label">Live getrackt</div>
+                <strong id="sat-stat-live">--</strong>
+            </div>
         </div>
-        <div class="lf-title">Raketenstarts von der Erde</div>
-        <div class="lf-source">Geplante und bestätigte Starts (Startplätze mit Koordinaten). Quelle: The Space Devs · Launch Library</div>
-        <div id="launch-feed-status">Lade …</div>
+
+        <div class="hero-launch-card">
+            <div class="status-pill" id="scene-mode-pill">Home-Modus: Earth Launch Tracker</div>
+            <div class="hero-launch-meta">
+                <div class="meta-block">
+                    <div class="small-label">Status</div>
+                    <strong id="watch-launch-status">--</strong>
+                </div>
+                <div class="meta-block">
+                    <div class="small-label">Countdown</div>
+                    <strong id="watch-launch-countdown">--</strong>
+                </div>
+                <div class="meta-block">
+                    <div class="small-label">Startfenster</div>
+                    <strong id="watch-launch-window">--</strong>
+                </div>
+                <div class="meta-block">
+                    <div class="small-label">Pad</div>
+                    <strong id="watch-launch-pad">--</strong>
+                </div>
+                <div class="meta-block">
+                    <div class="small-label">Koordinaten</div>
+                    <strong id="watch-launch-coords">--</strong>
+                </div>
+            </div>
+            <div class="hero-action-row">
+                <button type="button" class="action-btn action-btn-accent" id="focus-next-launch">Zum Startplatz</button>
+            </div>
+            <div class="watch-intel" id="watch-launch-intel">Monitoring wartet auf Startdaten.</div>
+            <div class="watch-story">
+                <div class="small-label">Mission</div>
+                <p id="watch-launch-story">Sobald Launch-Daten geladen sind, erscheint hier die Missionsbeschreibung oder ein kurzer Kontext zum Flug.</p>
+                <div class="watch-story-grid">
+                    <div>
+                        <div class="small-label">Firma</div>
+                        <strong id="watch-launch-provider">--</strong>
+                    </div>
+                    <div>
+                        <div class="small-label">Rakete</div>
+                        <strong id="watch-launch-rocket">--</strong>
+                    </div>
+                </div>
+                <a id="watch-launch-link" class="watch-link is-hidden" href="#" target="_blank" rel="noreferrer noopener">Externe Quelle oeffnen</a>
+            </div>
+            <div class="launch-stream is-hidden" id="watch-launch-stream">
+                <div class="small-label">LiveStream</div>
+                <p id="watch-launch-stream-state">Streamsuche wartet auf T-15.</p>
+                <iframe id="watch-launch-stream-frame" class="launch-stream-frame is-hidden" title="Launch Livestream" src="about:blank" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+                <a id="watch-launch-stream-link" class="watch-link is-hidden" href="#" target="_blank" rel="noreferrer noopener">Livestream oeffnen</a>
+            </div>
+        </div>
+    </aside>
+
+    <aside class="panel" id="launch-feed-panel">
+        <div class="panel-head">
+            <div>
+                <div class="section-kicker">Launch Feed</div>
+                <h3>Raketenstarts</h3>
+            </div>
+            <div class="panel-head-actions">
+                <button type="button" class="ghost-btn panel-refresh-btn" id="launch-feed-refresh" aria-label="Launch Feed aktualisieren">&#8635;</button>
+                <button type="button" class="panel-arrow" data-ui-toggle="news" aria-label="Launch Feed ein- oder ausblenden">&#8250;</button>
+            </div>
+        </div>
+        <div class="launch-feed-tabs" role="group" aria-label="Launch Feed Ansicht">
+            <button type="button" class="toggle-chip" id="launch-feed-upcoming" aria-pressed="true">Anstehend</button>
+            <button type="button" class="toggle-chip" id="launch-feed-history" aria-pressed="false">Starthistorie</button>
+        </div>
+        <div id="launch-feed-status">Lade Startdaten ...</div>
         <div id="launch-feed-items"></div>
-        <span class="lf-refresh" id="launch-feed-refresh" role="button" tabindex="0">Jetzt aktualisieren</span>
-    </div>
+    </aside>
 
-    <!-- Progress -->
-    <div id="progress-bar">
-        <div id="progress-fill"></div>
-    </div>
-
-    <!-- Livestream (unten rechts) — https://www.youtube.com/watch?v=m3kR2KK8TEs -->
-    <div class="panel" id="livestream-panel" aria-label="YouTube Livestream">
-        <div class="livestream-head">
-            <span class="livestream-drag-handle" id="livestream-drag-handle" title="Ziehen zum Verschieben">Live</span>
-            <button type="button" class="panel-collapse-btn livestream-collapse-btn" data-panel="live" title="Live-Fenster ausblenden" aria-label="Live ausblenden">−</button>
+    <aside class="panel" id="satellite-focus-panel" aria-hidden="true">
+        <div class="panel-head">
+            <div>
+                <div class="section-kicker">Satellit verfolgt</div>
+                <h3 id="sat-focus-title">--</h3>
+                <div class="watch-subtitle" id="sat-focus-subtitle">Keine Verfolgung aktiv</div>
+            </div>
+            <button type="button" class="panel-arrow" id="sat-focus-stop" aria-label="Satellitenverfolgung beenden">&times;</button>
         </div>
-        <div class="livestream-frame-wrap">
-            <iframe
-                src="https://www.youtube.com/embed/m3kR2KK8TEs?rel=0&amp;modestbranding=1"
-                title="YouTube Livestream"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                referrerpolicy="strict-origin-when-cross-origin"
-                allowfullscreen></iframe>
+        <div class="sat-focus-grid">
+            <div>
+                <span>Typ</span>
+                <strong id="sat-focus-type">--</strong>
+            </div>
+            <div>
+                <span>Betreiber</span>
+                <strong id="sat-focus-operator">--</strong>
+            </div>
+            <div>
+                <span>Land/Region</span>
+                <strong id="sat-focus-country">--</strong>
+            </div>
+            <div>
+                <span>Zuordnung</span>
+                <strong id="sat-focus-profile-source">--</strong>
+            </div>
+            <div>
+                <span>Regime</span>
+                <strong id="sat-focus-regime">--</strong>
+            </div>
+            <div>
+                <span>Live-Hoehe</span>
+                <strong id="sat-focus-altitude">--</strong>
+            </div>
+            <div>
+                <span>Perigaeum</span>
+                <strong id="sat-focus-perigee">--</strong>
+            </div>
+            <div>
+                <span>Apogaeum</span>
+                <strong id="sat-focus-apogee">--</strong>
+            </div>
+            <div>
+                <span>Inklination</span>
+                <strong id="sat-focus-inclination">--</strong>
+            </div>
+            <div>
+                <span>Periode</span>
+                <strong id="sat-focus-period">--</strong>
+            </div>
+            <div>
+                <span>Exzentrizitaet</span>
+                <strong id="sat-focus-eccentricity">--</strong>
+            </div>
+            <div>
+                <span>Breite</span>
+                <strong id="sat-focus-latitude">--</strong>
+            </div>
+            <div>
+                <span>Laenge</span>
+                <strong id="sat-focus-longitude">--</strong>
+            </div>
         </div>
-    </div>
+        <button type="button" class="action-btn action-btn-accent sat-stop-wide" id="sat-focus-stop-wide">Verfolgung beenden</button>
+    </aside>
 
-    <!-- Wiederherstellen (nur sichtbar wenn jeweiliges Panel ausgeblendet) -->
-    <button type="button" class="panel-restore-tab" id="panel-restore-info" data-panel="info" title="Daten einblenden · Taste H: alle ein/aus" aria-label="Daten einblenden">Daten ▶</button>
-    <button type="button" class="panel-restore-tab" id="panel-restore-launch" data-panel="launch" title="News einblenden · Taste H: alle ein/aus" aria-label="News einblenden">News ▶</button>
-    <button type="button" class="panel-restore-tab" id="panel-restore-live" data-panel="live" title="Live einblenden · Taste H: alle ein/aus" aria-label="Live einblenden">Live ▶</button>
-    <button type="button" class="panel-restore-tab" id="panel-restore-controls" data-panel="controls" title="Steuerung einblenden · Taste H: alle ein/aus" aria-label="Zoom und Steuerung einblenden">Steuerung ▶</button>
-
-    <!-- Controls (bottom center) -->
-    <div class="panel" id="controls-panel">
-        <button type="button" class="panel-collapse-btn" data-panel="controls" title="Steuerung ausblenden (Taste H: alle)" aria-label="Zoom und Steuerung ausblenden">−</button>
-        <div class="ctrl-mode-tabs" role="tablist" aria-label="Steuerungsbereiche">
-            <button type="button" class="ctrl-tab active" id="ctrl-tab-space" role="tab" aria-selected="true" data-section="space">Raum</button>
-            <button type="button" class="ctrl-tab" id="ctrl-tab-time" role="tab" aria-selected="false" data-section="time">Zeit</button>
-        </div>
-        <div id="controls-section-space" class="controls-section" role="tabpanel">
-            <div class="zoom-row" title="Logarithmische Skala: rechts = weiter weg. Ab ca. 100 Mio km Abstand erscheinen alle Umlaufbahnen.">
-                <span class="ctrl-label">Zoom</span>
-                <input type="range" id="zoom-slider" min="0" max="1000" value="500" step="1" />
+    <section class="panel" id="controls-panel">
+        <button type="button" class="panel-arrow panel-arrow-controls" data-ui-toggle="controls" aria-label="Steuerung ein- oder ausblenden">&#8964;</button>
+        <div class="controls-grid controls-grid-inline">
+            <div class="zoom-row controls-inline-chunk">
+                <span class="small-label">Zoom</span>
+                <input type="range" id="zoom-slider" min="0" max="1000" value="420" step="1">
                 <span id="zoom-readout">--</span>
             </div>
-            <div class="controls-row">
-                <button class="action-btn" id="follow-btn" onclick="toggleFollow()">Orion folgen</button>
-                <button class="action-btn" id="moon-btn" onclick="toggleMoonView()">Mond-Sicht</button>
-                <button class="action-btn" id="free-cam-btn" onclick="toggleFreeCamera()" title="Maus: umschauen · Pfeiltasten: fliegen">Freie Kamera</button>
-                <button class="action-btn" onclick="resetView()">Erde</button>
-                <button class="action-btn" onclick="solarSystemView()">Sonnensystem</button>
+
+            <div class="controls-row controls-inline-chunk">
+                <button type="button" class="action-btn action-btn-accent" id="control-focus-launch">Naechster Start</button>
+                <button type="button" class="action-btn" id="earth-view-btn">Erde</button>
+                <button type="button" class="action-btn" id="observer-view-btn">Mein Standort</button>
+                <button type="button" class="action-btn" id="moon-view-btn">Mond</button>
+                <button type="button" class="action-btn" id="solar-view-btn">Sonnensystem</button>
+                <button type="button" class="action-btn" id="free-cam-btn">Freie Kamera</button>
+            </div>
+
+            <div class="time-row controls-inline-chunk">
+                <span class="small-label">Zeit</span>
+                <button type="button" class="action-btn" id="jump-now-btn">Jetzt</button>
+                <div class="warp-cluster">
+                    <button type="button" class="action-btn" id="warp-backward-btn">-10x</button>
+                    <button type="button" class="action-btn active" id="warp-reset-btn">1x</button>
+                    <button type="button" class="action-btn" id="warp-forward-btn">10x</button>
+                </div>
+                <span id="warp-display">1x</span>
             </div>
         </div>
-        <div id="controls-section-time" class="controls-section" style="display: none;" role="tabpanel">
-            <div class="time-now-row">
-                <button type="button" class="action-btn" onclick="jumpToNow()">Jetzt</button>
+    </section>
+
+    <button type="button" class="panel-restore-tab panel-restore-left" id="panel-restore-watch" data-ui-toggle="watch" aria-label="Launch Watch einblenden">Watch</button>
+    <button type="button" class="panel-restore-tab panel-restore-right" id="panel-restore-news" data-ui-toggle="news" aria-label="Launch Feed einblenden">Feed</button>
+    <button type="button" class="panel-restore-tab panel-restore-bottom" id="panel-restore-controls" data-ui-toggle="controls" aria-label="Steuerung einblenden">Steuerung</button>
+
+    <div class="drawer-scrim" id="search-scrim"></div>
+    <div class="drawer-scrim" id="settings-scrim"></div>
+
+    <aside class="panel" id="search-drawer" aria-hidden="true">
+        <div class="drawer-head">
+            <div>
+                <div class="section-kicker">Tracking</div>
+                <h2>Satelliten-Suche</h2>
+                <p>Suche nach ISS, Hubble, Tiangong, Starlink und allen anderen oeffentlich trackbaren Satelliten und filtere die Orbits live nach Regime.</p>
             </div>
-            <div class="time-warp-block ctrl-group">
-                <span class="ctrl-label">Zeitraffer</span>
-                <div class="warp-triple">
-                    <button type="button" class="warp-btn warp-reverse warp-btn-wb" onclick="cycleWarpBackward()" title="Erneut klicken: −100×, −1.000× …">−10×</button>
-                    <button type="button" class="warp-btn active warp-center warp-btn-w1" onclick="warpToOne()" title="Echtzeit">1×</button>
-                    <button type="button" class="warp-btn warp-btn-wf" onclick="cycleWarpForward()" title="Erneut klicken: 100×, 1.000× …">10×</button>
-                </div>
-                <span id="warp-display" style="min-width: 4.5em; text-align: center; font-family: Consolas, monospace; font-size: 12px; color: #9cf;">1×</span>
-            </div>
-            <details class="mission-scrub-details" id="mission-scrub-details">
-                <summary>Mission durchblättern (MET)</summary>
-                <div class="mission-scrub-inner">
-                    <input type="range" id="mission-met-slider" min="0" max="1000" value="0" step="0.1" title="Position in der Mission (nach Ephemeriden-Ladezeit)" />
-                    <span id="mission-met-readout">T+ … MET</span>
-                </div>
-            </details>
+            <button type="button" class="icon-btn" id="search-close" aria-label="Suche schliessen">&times;</button>
         </div>
-    </div>
 
-    <script>
-    (function () {
-        const panel = document.getElementById('livestream-panel');
-        const handle = document.getElementById('livestream-drag-handle');
-        if (!panel || !handle) return;
+        <section class="drawer-section">
+            <div class="search-input-wrap">
+                <input type="search" id="satellite-search-input" placeholder="ISS, Hubble, Tiangong, Starlink ..." autocomplete="off">
+            </div>
+            <div class="toggle-row">
+                <button type="button" class="toggle-chip" id="sat-filter-leo" data-sat-filter="LEO" aria-pressed="true">LEO</button>
+                <button type="button" class="toggle-chip" id="sat-filter-meo" data-sat-filter="MEO" aria-pressed="true">MEO</button>
+                <button type="button" class="toggle-chip" id="sat-filter-geo" data-sat-filter="GEO" aria-pressed="true">GEO</button>
+                <button type="button" class="toggle-chip" id="sat-filter-heo" data-sat-filter="HEO" aria-pressed="true">HEO</button>
+            </div>
+            <p id="satellite-search-status">Lade Satellitenkatalog ...</p>
+        </section>
 
-        const POS_KEY = 'artemisobserver-livestream-pos';
-        let dragging = false;
-        let startX = 0;
-        let startY = 0;
-        let origLeft = 0;
-        let origTop = 0;
+        <section class="drawer-section">
+            <div class="panel-head">
+                <div>
+                    <h3>Ergebnisse</h3>
+                    <p>Jeder Treffer kann fokussiert oder direkt verfolgt werden.</p>
+                </div>
+            </div>
+            <div id="satellite-search-results"></div>
+        </section>
+    </aside>
 
-        function toLeftTop() {
-            const r = panel.getBoundingClientRect();
-            panel.style.right = 'auto';
-            panel.style.bottom = 'auto';
-            panel.style.left = r.left + 'px';
-            panel.style.top = r.top + 'px';
-        }
+    <aside class="panel" id="settings-drawer" aria-hidden="true">
+        <div class="drawer-head">
+            <div>
+                <div class="section-kicker">Settings</div>
+                <h2>Artemis II Replay</h2>
+                <p>Die Mission bleibt aus der Home-Oberflaeche raus, laesst sich hier aber komplett durchscrollen und bei Bedarf im 3D-Raum einblenden.</p>
+            </div>
+            <button type="button" class="icon-btn" id="settings-close" aria-label="Settings schliessen">&times;</button>
+        </div>
 
-        function clampPosition() {
-            let l = parseFloat(panel.style.left);
-            let t = parseFloat(panel.style.top);
-            if (isNaN(l) || isNaN(t)) return;
-            const w = panel.offsetWidth;
-            const h = panel.offsetHeight;
-            const maxL = Math.max(8, window.innerWidth - w - 8);
-            const maxT = Math.max(8, window.innerHeight - h - 8);
-            l = Math.max(8, Math.min(l, maxL));
-            t = Math.max(8, Math.min(t, maxT));
-            panel.style.left = l + 'px';
-            panel.style.top = t + 'px';
-            panel.style.right = 'auto';
-            panel.style.bottom = 'auto';
-        }
+        <section class="drawer-section">
+            <h3>Interface</h3>
+            <p>Steuere die Zusatzpanels, ohne die Startseite wieder mit Artemis-spezifischen Modulen zu ueberfrachten.</p>
+            <div class="toggle-row">
+                <button type="button" class="toggle-chip" id="toggle-news" data-ui-toggle="news" aria-pressed="true">Feed</button>
+                <button type="button" class="toggle-chip" id="toggle-watch" data-ui-toggle="watch" aria-pressed="true">Launch Watch</button>
+                <button type="button" class="toggle-chip" id="toggle-controls" data-ui-toggle="controls" aria-pressed="true">Steuerung</button>
+            </div>
+        </section>
 
-        function savePosition() {
-            try {
-                const l = parseFloat(panel.style.left);
-                const t = parseFloat(panel.style.top);
-                if (!isNaN(l) && !isNaN(t)) {
-                    localStorage.setItem(POS_KEY, JSON.stringify({ left: l, top: t }));
-                }
-            } catch (e) { /* ignore */ }
-        }
+        <section class="drawer-section">
+            <div class="panel-head">
+                <div>
+                    <h3>Replay-Deck</h3>
+                    <p>Nutze den Slider oder die Missionsmarken, um Artemis II als Replay anzusehen.</p>
+                </div>
+                <button type="button" class="action-btn action-btn-accent" id="toggle-artemis-replay">Replay im Raum aus</button>
+            </div>
 
-        function restorePosition() {
-            try {
-                const raw = localStorage.getItem(POS_KEY);
-                if (!raw) return;
-                const p = JSON.parse(raw);
-                if (typeof p.left !== 'number' || typeof p.top !== 'number') return;
-                panel.style.right = 'auto';
-                panel.style.bottom = 'auto';
-                panel.style.left = p.left + 'px';
-                panel.style.top = p.top + 'px';
-                clampPosition();
-            } catch (e) { /* ignore */ }
-        }
+            <div class="mission-cards">
+                <div class="mission-card">
+                    <div class="small-label">MET</div>
+                    <strong id="met-clock">T+ 0d 00:00:00</strong>
+                </div>
+                <div class="mission-card">
+                    <div class="small-label">Phase</div>
+                    <strong id="mission-phase">Initialisierung</strong>
+                </div>
+                <div class="mission-card">
+                    <div class="small-label">Datum &amp; Uhrzeit</div>
+                    <strong id="mission-date">--</strong>
+                </div>
+                <div class="mission-card">
+                    <div class="small-label">Entfernung Erde</div>
+                    <strong class="metric" id="dist-earth">--</strong>
+                </div>
+                <div class="mission-card">
+                    <div class="small-label">Abstand Mond</div>
+                    <strong class="metric-moon" id="dist-moon">--</strong>
+                </div>
+                <div class="mission-card">
+                    <div class="small-label">Geschwindigkeit</div>
+                    <strong class="metric-amber" id="velocity">--</strong>
+                </div>
+            </div>
 
-        handle.addEventListener('pointerdown', function (e) {
-            if (e.button !== 0) return;
-            e.preventDefault();
-            toLeftTop();
-            const r = panel.getBoundingClientRect();
-            origLeft = r.left;
-            origTop = r.top;
-            startX = e.clientX;
-            startY = e.clientY;
-            dragging = true;
-            handle.style.cursor = 'grabbing';
-            try {
-                handle.setPointerCapture(e.pointerId);
-            } catch (err) { /* ignore */ }
-        });
+            <div class="mission-slider-wrap">
+                <div class="mission-slider-head">
+                    <span class="small-label">Missionsposition</span>
+                    <span id="mission-met-readout">T+ 0d 00:00:00 MET</span>
+                </div>
+                <input type="range" id="mission-met-slider" min="0" max="1000" value="0" step="0.1">
+                <div class="drawer-action-row" style="margin-top: 14px;">
+                    <button type="button" class="action-btn" id="jump-artemis-start">Zum Start</button>
+                    <button type="button" class="action-btn" id="jump-artemis-end">Zur Landung</button>
+                    <button type="button" class="action-btn" id="follow-artemis">Orion folgen</button>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" id="mission-progress-fill"></div>
+                </div>
+            </div>
 
-        handle.addEventListener('pointermove', function (e) {
-            if (!dragging) return;
-            const w = panel.offsetWidth;
-            const h = panel.offsetHeight;
-            let nl = origLeft + (e.clientX - startX);
-            let nt = origTop + (e.clientY - startY);
-            const maxL = Math.max(8, window.innerWidth - w - 8);
-            const maxT = Math.max(8, window.innerHeight - h - 8);
-            nl = Math.max(8, Math.min(nl, maxL));
-            nt = Math.max(8, Math.min(nt, maxT));
-            panel.style.left = nl + 'px';
-            panel.style.top = nt + 'px';
-        });
+            <div class="mission-timeline" id="mission-timeline-items"></div>
+        </section>
+    </aside>
 
-        function endDrag(e) {
-            if (!dragging) return;
-            dragging = false;
-            handle.style.cursor = 'grab';
-            try {
-                if (e.pointerId != null) handle.releasePointerCapture(e.pointerId);
-            } catch (err) { /* ignore */ }
-            savePosition();
-        }
-
-        handle.addEventListener('pointerup', endDrag);
-        handle.addEventListener('pointercancel', endDrag);
-
-        window.addEventListener('resize', function () {
-            if (panel.style.left && panel.style.top) {
-                clampPosition();
-                savePosition();
-            }
-        });
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', restorePosition);
-        } else {
-            restorePosition();
-        }
-    })();
-    </script>
-
-    <!-- Trajectory data (plain script, no module) -->
     <script src="trajectory.js"></script>
 
-    <!-- Three.js via import map -->
     <script type="importmap">
     {
         "imports": {
@@ -1190,6 +371,5 @@
     }
     </script>
     <script type="module" src="app.js"></script>
-
 </body>
 </html>

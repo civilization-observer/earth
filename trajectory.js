@@ -369,3 +369,5 @@ const ARTEMIS2 = (() => {
         get dataLoaded() { return dataLoaded; }
     };
 })();
+
+window.ARTEMIS2 = ARTEMIS2;

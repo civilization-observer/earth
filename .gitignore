@@ -6,14 +6,18 @@ Desktop.ini
 # Editor / IDE
 .idea/
 .vscode/
+__pycache__/
 *.swp
 *.swo
 
-# Logs, temporär
+# Logs, temporaer
 *.log
 npm-debug.log*
 
-# Falls später npm/node genutzt wird
+# Lokale Laufzeit-Caches
+.cache/
+
+# Falls spaeter npm/node genutzt wird
 node_modules/
 
 # Umgebung / Geheimnisse (falls du je .env nutzt)
