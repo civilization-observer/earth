@@ -1290,6 +1290,14 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         return { text: launchStatusLabel(launch), className: '' };
     }
 
+    function belongsInLaunchHistory(launch, now = Date.now()) {
+        const when = launchInstant(launch);
+        if (!when) return Boolean(launch?.outcome);
+        const isFuture = when.getTime() > now;
+        if (isFuture && classifyLaunchStatus(launch) === 'delayed') return false;
+        return Boolean(launch?.outcome) || when.getTime() <= now;
+    }
+
     function launchStory(launch) {
         if (launch?.missionDescription) return launch.missionDescription;
         if (typeof launch?.mission === 'string' && launch.mission.trim()) return launch.mission.trim();
@@ -1662,11 +1670,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         try {
             const payload = await fetchStaticJson(LAUNCH_DB_DATA_URL);
             const items = Array.isArray(payload?.launches) ? payload.launches : [];
+            const now = Date.now();
             state.launchHistoryItems = items
-                .filter((launch) => {
-                    const when = launchInstant(launch);
-                    return launch?.outcome || (when && when.getTime() <= Date.now());
-                })
+                .filter((launch) => belongsInLaunchHistory(launch, now))
                 .sort((a, b) => {
                     const ta = launchInstant(a);
                     const tb = launchInstant(b);
