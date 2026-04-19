@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-04-19T14:02:35Z",
+  "generatedAt": "2026-04-19T14:55:03Z",
   "source": "launch-db",
-  "timezone": "Europe/Berlin",
+  "timezone": "UTC",
   "week": {
     "current": 5,
     "previous": 7,
