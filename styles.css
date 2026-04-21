@@ -1390,6 +1390,18 @@ body.hide-controls .panel-restore-bottom {
         transform: translateX(-50%);
     }
 
+    .mobile-sheet-resize-handle {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        z-index: 2;
+        width: 88px;
+        height: 26px;
+        transform: translateX(-50%);
+        cursor: ns-resize;
+        touch-action: none;
+    }
+
     #overview-panel.mobile-sheet-active,
     #mission-control-panel.mobile-sheet-active,
     #launch-feed-panel.mobile-sheet-active,
@@ -1423,6 +1435,7 @@ body.hide-controls .panel-restore-bottom {
     #launch-feed-panel .panel-head,
     #satellite-focus-panel .panel-head {
         cursor: ns-resize;
+        touch-action: none;
     }
 
     body.launch-detail-active:not(.hide-watch) #overview-panel,

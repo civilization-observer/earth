@@ -764,13 +764,28 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         dom[sheetId].style.setProperty('--mobile-sheet-height', `${height}px`);
     }
 
+    function ensureMobileSheetHandles() {
+        [
+            'overview-panel',
+            'launch-feed-panel',
+            'controls-panel',
+            'mission-control-panel',
+            'satellite-focus-panel'
+        ].forEach((id) => {
+            const panel = dom[id];
+            if (!panel || panel.querySelector('.mobile-sheet-resize-handle')) return;
+            const handle = document.createElement('div');
+            handle.className = 'mobile-sheet-resize-handle';
+            handle.setAttribute('aria-hidden', 'true');
+            panel.prepend(handle);
+        });
+    }
+
     function isMobileSheetDragTarget(event, panel) {
         if (!isMobileViewport()) return false;
         if (event.button !== undefined && event.button !== 0) return false;
         if (event.target.closest('button, a, input, select, textarea, iframe')) return false;
-        const rect = panel.getBoundingClientRect();
-        if (event.clientY - rect.top <= 64) return true;
-        return Boolean(event.target.closest('.panel-head'));
+        return Boolean(event.target.closest('.mobile-sheet-resize-handle, .panel-head'));
     }
 
     function onMobileSheetPointerDown(event) {
@@ -789,6 +804,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         };
         panel.classList.add('mobile-sheet-dragging');
         panel.setPointerCapture?.(event.pointerId);
+        window.addEventListener('pointermove', onMobileSheetPointerMove, { capture: true, passive: false });
+        window.addEventListener('pointerup', endMobileSheetDrag, { capture: true });
+        window.addEventListener('pointercancel', endMobileSheetDrag, { capture: true });
         event.preventDefault();
     }
 
@@ -810,6 +828,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         if (!drag || (event?.pointerId !== undefined && drag.pointerId !== event.pointerId)) return;
         drag.panel.classList.remove('mobile-sheet-dragging');
         drag.panel.releasePointerCapture?.(drag.pointerId);
+        window.removeEventListener('pointermove', onMobileSheetPointerMove, true);
+        window.removeEventListener('pointerup', endMobileSheetDrag, true);
+        window.removeEventListener('pointercancel', endMobileSheetDrag, true);
         state.mobileSheetDrag = null;
     }
 
@@ -896,6 +917,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         dom['settings-toggle']?.addEventListener('click', openSettings);
         dom['settings-close']?.addEventListener('click', closeSettings);
         dom['settings-scrim']?.addEventListener('click', closeSettings);
+        ensureMobileSheetHandles();
 
         document.querySelectorAll('[data-mobile-panel]').forEach((button) => {
             button.addEventListener('click', () => {
@@ -912,9 +934,6 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             'satellite-focus-panel'
         ].forEach((id) => {
             dom[id]?.addEventListener('pointerdown', onMobileSheetPointerDown);
-            dom[id]?.addEventListener('pointermove', onMobileSheetPointerMove);
-            dom[id]?.addEventListener('pointerup', endMobileSheetDrag);
-            dom[id]?.addEventListener('pointercancel', endMobileSheetDrag);
         });
 
         document.querySelectorAll('[data-ui-toggle]').forEach((button) => {
