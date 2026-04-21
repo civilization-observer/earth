@@ -42,38 +42,50 @@
                 <div class="small-label">Naechster Countdown</div>
                 <strong id="launch-stat-countdown">--</strong>
             </div>
-            <div class="stat-card">
+            <button type="button" class="stat-card" data-stat-panel="providers" aria-label="Anbieter-Statistik oeffnen">
                 <div class="small-label">Anbieter</div>
                 <strong id="launch-stat-orgs">--</strong>
-            </div>
+            </button>
             <div class="stat-card">
                 <div class="small-label">Pads</div>
                 <strong id="launch-stat-pads">--</strong>
             </div>
-            <div class="stat-card">
+            <button type="button" class="stat-card" data-stat-panel="launch-week" aria-label="Wochenverlauf erfolgreicher Starts oeffnen">
                 <div class="small-label">Erfolgreich Woche</div>
                 <strong id="launch-stat-success-week">--</strong>
                 <span class="stat-delta" id="launch-stat-success-week-delta">--</span>
-            </div>
-            <div class="stat-card">
+            </button>
+            <button type="button" class="stat-card" data-stat-panel="launch-month" aria-label="Monatsverlauf erfolgreicher Starts oeffnen">
                 <div class="small-label">Erfolgreich Monat</div>
                 <strong id="launch-stat-success-month">--</strong>
                 <span class="stat-delta" id="launch-stat-success-month-delta">--</span>
-            </div>
-            <div class="stat-card">
+            </button>
+            <button type="button" class="stat-card" data-stat-panel="launch-year" aria-label="Jahresverlauf erfolgreicher Starts oeffnen">
                 <div class="small-label">Erfolgreich Jahr</div>
                 <strong id="launch-stat-success-year">--</strong>
                 <span class="stat-delta" id="launch-stat-success-year-delta">--</span>
-            </div>
+            </button>
             <div class="stat-card">
                 <div class="small-label">Satelliten im Orbit</div>
                 <strong id="sat-stat-total">--</strong>
             </div>
-            <div class="stat-card">
+            <button type="button" class="stat-card" data-stat-panel="sat-live" aria-label="Verlauf live getrackter Satelliten oeffnen">
                 <div class="small-label">Live getrackt</div>
                 <strong id="sat-stat-live">--</strong>
-            </div>
+            </button>
         </div>
+    </aside>
+
+    <aside class="panel" id="stat-insight-panel" aria-hidden="true">
+        <div class="panel-head">
+            <div>
+                <div class="section-kicker">Statistik</div>
+                <h3 id="stat-insight-title">Verlauf</h3>
+                <div class="watch-subtitle" id="stat-insight-subtitle">--</div>
+            </div>
+            <button type="button" class="panel-arrow" id="stat-insight-close" aria-label="Statistik schliessen">&times;</button>
+        </div>
+        <div class="stat-insight-body" id="stat-insight-body"></div>
     </aside>
 
     <aside class="panel" id="mission-control-panel" aria-hidden="true">
@@ -341,6 +353,18 @@
                     <span id="satellite-orbit-revolutions-readout">2 Umlaeufe</span>
                 </div>
                 <input type="range" id="satellite-orbit-revolutions" min="1" max="5" value="2" step="1">
+            </div>
+        </section>
+
+        <section class="drawer-section">
+            <h3>Launch-Groundtrack</h3>
+            <p>Lege fest, wie weit die blaue Bodenprojektion einer ausgewaehlten Mission vorauslaeuft.</p>
+            <div class="orbit-setting-wrap">
+                <div class="mission-slider-head">
+                    <span class="small-label">Bodenroute-Laenge</span>
+                    <span id="launch-ground-track-revolutions-readout">2 Umlaeufe</span>
+                </div>
+                <input type="range" id="launch-ground-track-revolutions" min="1" max="5" value="2" step="1">
             </div>
         </section>
 

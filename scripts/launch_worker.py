@@ -25,6 +25,7 @@ DB_PATH = DATA_DIR / "launch-db.json"
 STATS_PATH = DATA_DIR / "launch-stats.json"
 STATE_PATH = DATA_DIR / "worker-state.json"
 SATELLITE_TLE_PATH = DATA_DIR / "active-satellites.tle"
+SATELLITE_HISTORY_PATH = DATA_DIR / "satellite-live-history.json"
 ISS_OEM_PATH = DATA_DIR / "iss-oem-j2k.txt"
 
 LL_BASE = "https://ll.thespacedevs.com/2.2.0"
@@ -46,9 +47,14 @@ POSTFLIGHT_DELAY = timedelta(minutes=30)
 DETAIL_RECHECK_INTERVAL = timedelta(minutes=30)
 PREFLIGHT_MISSED_MARK_AFTER = timedelta(hours=6)
 DB_LIMIT = 1000
+SATELLITE_HISTORY_MAX_DAYS = 90
 
 TERMINAL_OUTCOMES = {"success", "failure", "cancelled"}
 OBSERVED_OUTCOMES = TERMINAL_OUTCOMES | {"delayed"}
+HISTORICAL_SUCCESSFUL_LAUNCHES_BY_YEAR = {
+    # Launch Library 2 count for 2025 with status=Launch Successful.
+    2025: 329,
+}
 
 EMPTY_FEED = {
     "generatedAt": None,
@@ -70,6 +76,14 @@ EMPTY_STATS = {
     "week": {"current": 0, "previous": None, "delta": None},
     "month": {"current": 0, "previous": None, "delta": None},
     "year": {"current": 0, "previous": None, "delta": None},
+}
+
+EMPTY_SATELLITE_HISTORY = {
+    "generatedAt": None,
+    "source": "celestrak-active-tle",
+    "cadenceHours": 2,
+    "windowDays": SATELLITE_HISTORY_MAX_DAYS,
+    "samples": [],
 }
 
 EMPTY_STATE = {
@@ -552,6 +566,8 @@ def compute_stats(launches: list[dict], now: datetime, tz_name: str) -> dict:
         current_start, previous_start, previous_end = period_bounds(now_local, period)
         current = sum(1 for item in successful_times if current_start <= item < now_local)
         previous = sum(1 for item in successful_times if previous_start <= item < previous_end)
+        if period == "year":
+            previous = HISTORICAL_SUCCESSFUL_LAUNCHES_BY_YEAR.get(previous_start.year, previous)
         return {
             "current": current,
             "previous": previous,
@@ -565,6 +581,7 @@ def compute_stats(launches: list[dict], now: datetime, tz_name: str) -> dict:
         "week": make_period("week"),
         "month": make_period("month"),
         "year": make_period("year"),
+        "historicalSuccessfulLaunchesByYear": HISTORICAL_SUCCESSFUL_LAUNCHES_BY_YEAR,
     }
 
 
@@ -575,19 +592,62 @@ def should_refresh(last_value: object, interval: timedelta, now: datetime, force
     return last is None or now - last >= interval
 
 
-def refresh_satellites(now: datetime, state: dict, force: bool, errors: list[str]) -> bool:
+def count_tle_satellites(text: str) -> int:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    count = 0
+    for index, line in enumerate(lines[:-1]):
+        if line.startswith("1 ") and lines[index + 1].startswith("2 "):
+            count += 1
+    return count
+
+
+def append_satellite_history_sample(history: dict, now: datetime, live_count: int) -> dict:
+    samples = history.get("samples")
+    if not isinstance(samples, list):
+        samples = []
+
+    cutoff = now - timedelta(days=SATELLITE_HISTORY_MAX_DAYS)
+    cleaned = []
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        timestamp = parse_time(sample.get("timestamp"))
+        count = sample.get("liveCount")
+        if timestamp is None or not isinstance(count, int) or timestamp < cutoff:
+            continue
+        cleaned.append({"timestamp": to_iso(timestamp), "liveCount": count})
+
+    now_iso = to_iso(now)
+    if cleaned and cleaned[-1].get("timestamp") == now_iso:
+        cleaned[-1]["liveCount"] = live_count
+    else:
+        cleaned.append({"timestamp": now_iso, "liveCount": live_count})
+
+    return {
+        "generatedAt": now_iso,
+        "source": "celestrak-active-tle",
+        "cadenceHours": 2,
+        "windowDays": SATELLITE_HISTORY_MAX_DAYS,
+        "samples": cleaned,
+    }
+
+
+def refresh_satellites(now: datetime, state: dict, force: bool, errors: list[str]) -> tuple[bool, int | None]:
     if not should_refresh(state.get("lastSatelliteRefreshAt"), SATELLITE_REFRESH_INTERVAL, now, force) and SATELLITE_TLE_PATH.exists():
-        return False
+        return False, None
     try:
         text = request_text(SATELLITE_SOURCE_URL)
         if not text.strip():
             raise RuntimeError("CelesTrak returned an empty TLE payload")
+        live_count = count_tle_satellites(text)
+        if live_count <= 0:
+            raise RuntimeError("CelesTrak TLE payload did not contain valid satellite records")
         changed = write_text_if_changed(SATELLITE_TLE_PATH, text)
         state["lastSatelliteRefreshAt"] = to_iso(now)
-        return changed
+        return changed, live_count
     except Exception as error:  # noqa: BLE001
         errors.append(f"satellite refresh failed: {error}")
-        return False
+        return False, None
 
 
 def refresh_iss_oem(now: datetime, state: dict, force: bool, errors: list[str]) -> bool:
@@ -625,6 +685,7 @@ def main() -> int:
     try:
         feed_payload = read_json(FEED_PATH, EMPTY_FEED)
         db_payload = read_json(DB_PATH, EMPTY_DB)
+        satellite_history_payload = read_json(SATELLITE_HISTORY_PATH, EMPTY_SATELLITE_HISTORY)
         state = read_json(STATE_PATH, EMPTY_STATE)
     except RuntimeError as error:
         print(error, file=sys.stderr)
@@ -658,7 +719,9 @@ def main() -> int:
     }
 
     stats_payload = compute_stats(launches, now, os.environ.get("STATS_TIMEZONE", "Europe/Berlin"))
-    satellite_changed = refresh_satellites(now, state, args.force_satellites, errors)
+    satellite_changed, satellite_live_count = refresh_satellites(now, state, args.force_satellites, errors)
+    if satellite_live_count is not None:
+        satellite_history_payload = append_satellite_history_sample(satellite_history_payload, now, satellite_live_count)
     iss_oem_changed = refresh_iss_oem(now, state, args.force_iss_oem, errors)
 
     state["lastCheckRunAt"] = to_iso(now)
@@ -669,6 +732,7 @@ def main() -> int:
         (FEED_PATH, feed_payload),
         (DB_PATH, db_payload),
         (STATS_PATH, stats_payload),
+        (SATELLITE_HISTORY_PATH, satellite_history_payload),
         (STATE_PATH, state),
     ]
     for path, payload in writes:

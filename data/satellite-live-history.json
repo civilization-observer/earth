@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T16:43:33Z",
+  "source": "celestrak-active-tle",
+  "cadenceHours": 2,
+  "windowDays": 90,
+  "samples": [
+    {
+      "timestamp": "2026-04-21T16:43:33Z",
+      "liveCount": 15139
+    }
+  ]
+}

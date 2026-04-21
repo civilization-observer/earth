@@ -14,7 +14,10 @@
   },
   "year": {
     "current": 88,
-    "previous": 8,
-    "delta": 80
+    "previous": 329,
+    "delta": -241
+  },
+  "historicalSuccessfulLaunchesByYear": {
+    "2025": 329
   }
 }

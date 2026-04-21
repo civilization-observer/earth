@@ -262,6 +262,20 @@ body.satellite-following #satellite-focus-panel {
     display: block;
 }
 
+#stat-insight-panel {
+    top: 116px;
+    left: min(360px, calc(100vw - 420px));
+    width: min(390px, calc(100vw - 40px));
+    max-height: calc(100vh - 136px);
+    padding: 14px;
+    overflow: auto;
+    display: none;
+}
+
+body.stat-panel-open #stat-insight-panel {
+    display: block;
+}
+
 body.satellite-following .panel-restore-right {
     display: none !important;
 }
@@ -331,6 +345,21 @@ body.satellite-following .panel-restore-right {
     background: rgba(8, 18, 37, 0.86);
 }
 
+button.stat-card {
+    appearance: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+button.stat-card:hover,
+button.stat-card:focus-visible {
+    transform: translateY(-1px);
+    border-color: rgba(95, 216, 255, 0.42);
+    outline: none;
+}
+
 .stat-card strong {
     display: block;
     margin-top: 4px;
@@ -359,6 +388,192 @@ body.satellite-following .panel-restore-right {
 
 .stat-delta.even {
     color: var(--muted);
+}
+
+.stat-insight-body {
+    margin-top: 14px;
+}
+
+.stat-insight-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.stat-insight-metric {
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(8, 18, 37, 0.72);
+}
+
+.stat-insight-metric span {
+    display: block;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.stat-insight-metric strong {
+    display: block;
+    margin-top: 5px;
+    color: #fff;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.stat-chart {
+    display: grid;
+    align-items: end;
+    gap: 5px;
+    height: 176px;
+    padding: 12px 10px 8px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(3, 9, 20, 0.58);
+}
+
+.stat-chart-column {
+    min-width: 0;
+    height: 100%;
+    display: grid;
+    grid-template-rows: 18px 1fr 16px;
+    align-items: end;
+}
+
+.stat-chart-value {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1;
+}
+
+.stat-chart-bar {
+    width: 100%;
+    min-height: 2px;
+    border-radius: 6px 6px 2px 2px;
+    background: linear-gradient(180deg, rgba(24, 255, 192, 0.92), rgba(95, 216, 255, 0.42));
+    box-shadow: 0 0 18px rgba(95, 216, 255, 0.12);
+}
+
+.stat-chart-label {
+    align-self: end;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    text-overflow: clip;
+}
+
+.stat-line-chart {
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(3, 9, 20, 0.58);
+}
+
+.stat-line-chart svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.stat-line-grid {
+    stroke: rgba(141, 164, 198, 0.18);
+    stroke-width: 1;
+}
+
+.stat-line-area {
+    fill: rgba(95, 216, 255, 0.12);
+}
+
+.stat-line-path {
+    fill: none;
+    stroke: var(--teal);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    filter: drop-shadow(0 0 8px rgba(24, 255, 192, 0.24));
+}
+
+.stat-line-point {
+    fill: #ffffff;
+    stroke: var(--teal);
+    stroke-width: 1.5;
+}
+
+.stat-line-axis,
+.stat-line-label {
+    fill: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.stat-line-label {
+    text-anchor: middle;
+}
+
+.stat-ranking-list {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+.stat-ranking-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    padding: 9px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(8, 18, 37, 0.72);
+}
+
+.stat-ranking-name {
+    min-width: 0;
+    overflow: hidden;
+    color: #f7fbff;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.stat-ranking-count {
+    color: var(--teal);
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.stat-ranking-bar {
+    grid-column: 1 / -1;
+    height: 5px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(95, 216, 255, 0.1);
+}
+
+.stat-ranking-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, rgba(95, 216, 255, 0.92), rgba(24, 255, 192, 0.82));
+}
+
+.stat-empty {
+    padding: 16px;
+    border: 1px dashed rgba(95, 216, 255, 0.2);
+    border-radius: 12px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
 }
 
 .hero-launch-card {
@@ -741,6 +956,7 @@ body.satellite-following .panel-restore-right {
 #overview-panel,
 #mission-control-panel,
 #satellite-focus-panel,
+#stat-insight-panel,
 #launch-feed-items,
 .mission-timeline,
 #satellite-search-results,
@@ -753,6 +969,7 @@ body.satellite-following .panel-restore-right {
 #overview-panel::-webkit-scrollbar,
 #mission-control-panel::-webkit-scrollbar,
 #satellite-focus-panel::-webkit-scrollbar,
+#stat-insight-panel::-webkit-scrollbar,
 #launch-feed-items::-webkit-scrollbar,
 .mission-timeline::-webkit-scrollbar,
 #satellite-search-results::-webkit-scrollbar,
@@ -764,6 +981,7 @@ body.satellite-following .panel-restore-right {
 #overview-panel::-webkit-scrollbar-track,
 #mission-control-panel::-webkit-scrollbar-track,
 #satellite-focus-panel::-webkit-scrollbar-track,
+#stat-insight-panel::-webkit-scrollbar-track,
 #launch-feed-items::-webkit-scrollbar-track,
 .mission-timeline::-webkit-scrollbar-track,
 #satellite-search-results::-webkit-scrollbar-track,
@@ -775,6 +993,7 @@ body.satellite-following .panel-restore-right {
 #overview-panel::-webkit-scrollbar-thumb,
 #mission-control-panel::-webkit-scrollbar-thumb,
 #satellite-focus-panel::-webkit-scrollbar-thumb,
+#stat-insight-panel::-webkit-scrollbar-thumb,
 #launch-feed-items::-webkit-scrollbar-thumb,
 .mission-timeline::-webkit-scrollbar-thumb,
 #satellite-search-results::-webkit-scrollbar-thumb,
@@ -1152,6 +1371,11 @@ body.hide-controls .panel-restore-bottom {
         width: min(286px, calc(100vw - 40px));
     }
 
+    #stat-insight-panel {
+        left: 326px;
+        width: min(340px, calc(100vw - 40px));
+    }
+
     #controls-panel {
         width: min(760px, calc(100vw - 640px));
         min-width: 0;
@@ -1168,6 +1392,7 @@ body.hide-controls .panel-restore-bottom {
     #mission-control-panel,
     #launch-feed-panel,
     #satellite-focus-panel,
+    #stat-insight-panel,
     #controls-panel,
     #search-drawer,
     #settings-drawer {
@@ -1216,6 +1441,16 @@ body.hide-controls .panel-restore-bottom {
     }
 
     body.satellite-following #satellite-focus-panel {
+        display: block;
+    }
+
+    #stat-insight-panel {
+        display: none;
+        width: auto;
+        max-height: none;
+    }
+
+    body.stat-panel-open #stat-insight-panel {
         display: block;
     }
 
@@ -1310,6 +1545,7 @@ body.hide-controls .panel-restore-bottom {
     #mission-control-panel,
     #launch-feed-panel,
     #satellite-focus-panel,
+    #stat-insight-panel,
     #controls-panel {
         position: fixed;
         top: auto;
@@ -1342,6 +1578,7 @@ body.hide-controls .panel-restore-bottom {
     #mission-control-panel,
     #launch-feed-panel,
     #satellite-focus-panel,
+    #stat-insight-panel,
     #controls-panel {
         scrollbar-width: thin;
         scrollbar-color: rgba(95, 216, 255, 0.38) rgba(95, 216, 255, 0.06);
@@ -1351,6 +1588,7 @@ body.hide-controls .panel-restore-bottom {
     #mission-control-panel::-webkit-scrollbar,
     #launch-feed-panel::-webkit-scrollbar,
     #satellite-focus-panel::-webkit-scrollbar,
+    #stat-insight-panel::-webkit-scrollbar,
     #controls-panel::-webkit-scrollbar {
         width: 5px;
     }
@@ -1359,6 +1597,7 @@ body.hide-controls .panel-restore-bottom {
     #mission-control-panel::-webkit-scrollbar-track,
     #launch-feed-panel::-webkit-scrollbar-track,
     #satellite-focus-panel::-webkit-scrollbar-track,
+    #stat-insight-panel::-webkit-scrollbar-track,
     #controls-panel::-webkit-scrollbar-track {
         margin: 20px 0 10px;
         border-radius: 999px;
@@ -1369,6 +1608,7 @@ body.hide-controls .panel-restore-bottom {
     #mission-control-panel::-webkit-scrollbar-thumb,
     #launch-feed-panel::-webkit-scrollbar-thumb,
     #satellite-focus-panel::-webkit-scrollbar-thumb,
+    #stat-insight-panel::-webkit-scrollbar-thumb,
     #controls-panel::-webkit-scrollbar-thumb {
         border-radius: 999px;
         background: linear-gradient(180deg, rgba(95, 216, 255, 0.5), rgba(183, 193, 255, 0.22));
@@ -1378,6 +1618,7 @@ body.hide-controls .panel-restore-bottom {
     #mission-control-panel::before,
     #launch-feed-panel::before,
     #satellite-focus-panel::before,
+    #stat-insight-panel::before,
     #controls-panel::before {
         content: "";
         position: absolute;
@@ -1406,6 +1647,7 @@ body.hide-controls .panel-restore-bottom {
     #mission-control-panel.mobile-sheet-active,
     #launch-feed-panel.mobile-sheet-active,
     #satellite-focus-panel.mobile-sheet-active,
+    #stat-insight-panel.mobile-sheet-active,
     #controls-panel.mobile-sheet-active {
         transform: translateY(0);
         opacity: 1;
@@ -1417,6 +1659,7 @@ body.hide-controls .panel-restore-bottom {
     #mission-control-panel.mobile-sheet-active:not(.mobile-sheet-dragging),
     #launch-feed-panel.mobile-sheet-active:not(.mobile-sheet-dragging),
     #satellite-focus-panel.mobile-sheet-active:not(.mobile-sheet-dragging),
+    #stat-insight-panel.mobile-sheet-active:not(.mobile-sheet-dragging),
     #controls-panel.mobile-sheet-active:not(.mobile-sheet-dragging) {
         transition: height 0.12s ease, transform 0.26s ease, opacity 0.22s ease, visibility 0.22s ease;
     }
@@ -1425,6 +1668,7 @@ body.hide-controls .panel-restore-bottom {
     #mission-control-panel.mobile-sheet-dragging,
     #launch-feed-panel.mobile-sheet-dragging,
     #satellite-focus-panel.mobile-sheet-dragging,
+    #stat-insight-panel.mobile-sheet-dragging,
     #controls-panel.mobile-sheet-dragging {
         transition: none;
         user-select: none;
@@ -1433,7 +1677,8 @@ body.hide-controls .panel-restore-bottom {
     #overview-panel .panel-head,
     #mission-control-panel .panel-head,
     #launch-feed-panel .panel-head,
-    #satellite-focus-panel .panel-head {
+    #satellite-focus-panel .panel-head,
+    #stat-insight-panel .panel-head {
         cursor: ns-resize;
         touch-action: none;
     }
@@ -1452,7 +1697,8 @@ body.hide-controls .panel-restore-bottom {
     }
 
     #mission-control-panel,
-    #satellite-focus-panel {
+    #satellite-focus-panel,
+    #stat-insight-panel {
         display: flex;
     }
 
@@ -1530,14 +1776,13 @@ body.hide-controls .panel-restore-bottom {
         inset: 0;
         z-index: 6;
         display: block;
-        background: rgba(0, 4, 12, 0.28);
+        background: transparent;
         opacity: 0;
         pointer-events: none;
-        transition: opacity 0.22s ease;
     }
 
     body.mobile-sheet-open .mobile-sheet-scrim {
-        opacity: 1;
+        opacity: 0;
         pointer-events: none;
     }
 
@@ -1636,6 +1881,7 @@ body.hide-controls .panel-restore-bottom {
     #mission-control-panel,
     #launch-feed-panel,
     #satellite-focus-panel,
+    #stat-insight-panel,
     #controls-panel {
         right: 8px;
         left: 8px;

@@ -14,6 +14,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     const LAUNCH_FEED_DATA_URL = 'data/launch-feed.json';
     const LAUNCH_DB_DATA_URL = 'data/launch-db.json';
     const LAUNCH_STATS_DATA_URL = 'data/launch-stats.json';
+    const SATELLITE_LIVE_HISTORY_DATA_URL = 'data/satellite-live-history.json';
     const LAUNCH_VERIFY_WINDOW_MS = 15 * 60 * 1000;
     const LAUNCH_SUCCESS_CHECK_DELAY_MS = 30 * 60 * 1000;
     const LAUNCH_DATA_REFRESH_MS = 15 * 60 * 1000;
@@ -67,6 +68,12 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     const SATELLITE_LAYER_OPACITY = 0.88;
     const SATELLITE_LAYER_DIMMED_OPACITY = 0.22;
     const SATELLITE_PICK_THRESHOLD = 0.18;
+    const LAUNCH_FOCUS_VIEW_DISTANCE = 10.5;
+    const LAUNCH_ASCENT_SAMPLE_COUNT = 144;
+    const LAUNCH_ORBIT_PREVIEW_SAMPLE_COUNT = 220;
+    const LAUNCH_GROUND_TRACK_DEFAULT_REVOLUTIONS = 2;
+    const LAUNCH_GROUND_TRACK_MIN_REVOLUTIONS = 1;
+    const LAUNCH_GROUND_TRACK_MAX_REVOLUTIONS = 5;
     const SATELLITE_ORBIT_SAMPLE_COUNT = 360;
     const SATELLITE_ORBIT_DEFAULT_REVOLUTIONS = 2;
     const SATELLITE_ORBIT_MIN_REVOLUTIONS = 1;
@@ -75,6 +82,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     const SATELLITE_ORBIT_PERIOD_MAX_MINUTES = 8 * SIDEREAL_DAY_MINUTES;
     const SATELLITE_ORBIT_REFRESH_MS = 30 * 1000;
     const SCENE_CLICK_DRAG_TOLERANCE_PX = 7;
+    const PROVIDER_STATS_WINDOW_DAYS = 100;
 
     const localDateTime = new Intl.DateTimeFormat(undefined, {
         weekday: 'short',
@@ -208,6 +216,12 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         pickableMeshes: [],
         launchMarkerRoot: null,
         launchMarkers: new Map(),
+        launchTrajectoryFrame: null,
+        launchTrajectoryLine: null,
+        launchTrajectoryGroundTrackLine: null,
+        launchTrajectoryOrbitLine: null,
+        launchTrajectoryKey: '',
+        launchTrajectoryEventMs: 0,
         observerMarker: null,
         observerPulse: null,
         observerLocation: null,
@@ -224,6 +238,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         satelliteLibraryReady: false,
         satelliteLastError: '',
         satelliteLiveCount: 0,
+        satelliteLiveHistory: [],
+        satelliteLiveHistoryGeneratedAt: '',
+        satelliteLiveHistoryFetchedAt: 0,
         satelliteProfileCache: new Map(),
         satelliteProfilePending: new Map(),
         satelliteSearchQuery: '',
@@ -279,6 +296,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         launchSuccessStatsFetchedAt: 0,
         launchDataGeneratedAt: '',
         launchDataSource: '',
+        statsPanelOpen: false,
+        statsPanelMode: '',
         mobileActivePanel: null,
         mobileSheetDrag: null,
         mobileSheetHeights: {},
@@ -320,18 +339,28 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         );
     }
 
+    function clampLaunchGroundTrackRevolutions(value) {
+        return THREE.MathUtils.clamp(
+            Math.round(Number(value) || LAUNCH_GROUND_TRACK_DEFAULT_REVOLUTIONS),
+            LAUNCH_GROUND_TRACK_MIN_REVOLUTIONS,
+            LAUNCH_GROUND_TRACK_MAX_REVOLUTIONS
+        );
+    }
+
     function readUiState() {
         const defaults = {
             news: true,
             watch: true,
             controls: true,
-            orbitRevolutions: SATELLITE_ORBIT_DEFAULT_REVOLUTIONS
+            orbitRevolutions: SATELLITE_ORBIT_DEFAULT_REVOLUTIONS,
+            launchGroundTrackRevolutions: LAUNCH_GROUND_TRACK_DEFAULT_REVOLUTIONS
         };
         try {
             const raw = localStorage.getItem(UI_STORAGE_KEY);
             if (!raw) return defaults;
             const parsed = { ...defaults, ...JSON.parse(raw) };
             parsed.orbitRevolutions = clampSatelliteOrbitRevolutions(parsed.orbitRevolutions);
+            parsed.launchGroundTrackRevolutions = clampLaunchGroundTrackRevolutions(parsed.launchGroundTrackRevolutions);
             return parsed;
         } catch (error) {
             return defaults;
@@ -502,6 +531,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         [
             'canvas-container',
             'overview-panel',
+            'stat-insight-panel',
+            'stat-insight-close',
+            'stat-insight-title',
+            'stat-insight-subtitle',
+            'stat-insight-body',
             'real-time-zone',
             'real-time-berlin',
             'search-toggle',
@@ -542,6 +576,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             'mobile-nav-satellite',
             'satellite-orbit-revolutions',
             'satellite-orbit-revolutions-readout',
+            'launch-ground-track-revolutions',
+            'launch-ground-track-revolutions-readout',
             'launch-stat-total',
             'launch-stat-countdown',
             'launch-stat-orgs',
@@ -675,6 +711,27 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         updateSatelliteOrbitPath(true);
     }
 
+    function syncLaunchGroundTrackSettingsUi() {
+        const value = clampLaunchGroundTrackRevolutions(state.panelVisibility.launchGroundTrackRevolutions);
+        state.panelVisibility.launchGroundTrackRevolutions = value;
+        if (dom['launch-ground-track-revolutions']) {
+            dom['launch-ground-track-revolutions'].value = String(value);
+        }
+        if (dom['launch-ground-track-revolutions-readout']) {
+            dom['launch-ground-track-revolutions-readout'].textContent = satelliteOrbitRevolutionsLabel(value);
+        }
+    }
+
+    function onLaunchGroundTrackRevolutionsInput() {
+        if (!dom['launch-ground-track-revolutions']) return;
+        state.panelVisibility.launchGroundTrackRevolutions = clampLaunchGroundTrackRevolutions(
+            dom['launch-ground-track-revolutions'].valueAsNumber
+        );
+        syncLaunchGroundTrackSettingsUi();
+        writeUiState();
+        updateSelectedLaunchTrajectory(state.selectedLaunchId || state.launchDetailActive ? getSelectedLaunch() : null);
+    }
+
     function openSettings() {
         closeSearch();
         document.body.classList.add('settings-open');
@@ -715,9 +772,14 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         return Boolean(state.followSatelliteId && state.satelliteIndex.has(state.followSatelliteId));
     }
 
+    function hasMobileStatsContext() {
+        return Boolean(state.statsPanelOpen);
+    }
+
     function hasMobilePanelContext(panelKey) {
         if (panelKey === 'launch') return hasMobileLaunchContext();
         if (panelKey === 'satellite') return hasMobileSatelliteContext();
+        if (panelKey === 'stats') return hasMobileStatsContext();
         return ['info', 'feed', 'controls'].includes(panelKey);
     }
 
@@ -727,6 +789,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         if (panelKey === 'controls') return ['controls-panel'];
         if (panelKey === 'launch' && hasMobileLaunchContext()) return ['mission-control-panel'];
         if (panelKey === 'satellite' && hasMobileSatelliteContext()) return ['satellite-focus-panel'];
+        if (panelKey === 'stats' && hasMobileStatsContext()) return ['stat-insight-panel'];
         return [];
     }
 
@@ -736,7 +799,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             'launch-feed-panel': 'feed',
             'controls-panel': 'controls',
             'mission-control-panel': 'launch',
-            'satellite-focus-panel': 'satellite'
+            'satellite-focus-panel': 'satellite',
+            'stat-insight-panel': 'stats'
         }[id] || '';
     }
 
@@ -770,7 +834,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             'launch-feed-panel',
             'controls-panel',
             'mission-control-panel',
-            'satellite-focus-panel'
+            'satellite-focus-panel',
+            'stat-insight-panel'
         ].forEach((id) => {
             const panel = dom[id];
             if (!panel || panel.querySelector('.mobile-sheet-resize-handle')) return;
@@ -880,7 +945,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             'launch-feed-panel',
             'controls-panel',
             'mission-control-panel',
-            'satellite-focus-panel'
+            'satellite-focus-panel',
+            'stat-insight-panel'
         ].forEach((id) => {
             dom[id]?.classList.remove('mobile-sheet-active');
             if (mobile) dom[id]?.setAttribute('aria-hidden', String(!activeTargetIds.includes(id)));
@@ -917,7 +983,15 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         dom['settings-toggle']?.addEventListener('click', openSettings);
         dom['settings-close']?.addEventListener('click', closeSettings);
         dom['settings-scrim']?.addEventListener('click', closeSettings);
+        dom['stat-insight-close']?.addEventListener('click', closeStatsPanel);
         ensureMobileSheetHandles();
+
+        document.querySelectorAll('[data-stat-panel]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const mode = button.getAttribute('data-stat-panel');
+                if (mode) openStatsPanel(mode);
+            });
+        });
 
         document.querySelectorAll('[data-mobile-panel]').forEach((button) => {
             button.addEventListener('click', () => {
@@ -976,6 +1050,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         dom['follow-artemis']?.addEventListener('click', toggleFollowOrion);
 
         dom['satellite-orbit-revolutions']?.addEventListener('input', onSatelliteOrbitRevolutionsInput);
+        dom['launch-ground-track-revolutions']?.addEventListener('input', onLaunchGroundTrackRevolutionsInput);
 
         if (dom['zoom-slider']) {
             dom['zoom-slider'].addEventListener('pointerdown', () => { state.zoomSliderDragging = true; });
@@ -1020,6 +1095,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         cacheDom();
         applyPanelVisibility();
         syncSatelliteOrbitSettingsUi();
+        syncLaunchGroundTrackSettingsUi();
         initScene();
         bindUi();
         buildMissionTimeline();
@@ -1444,6 +1520,52 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
         state.launchMarkerRoot = new THREE.Group();
         state.earthMesh.add(state.launchMarkerRoot);
+
+        state.launchTrajectoryFrame = new THREE.Group();
+        state.earthGroup.add(state.launchTrajectoryFrame);
+
+        state.launchTrajectoryLine = new THREE.Line(
+            new THREE.BufferGeometry(),
+            new THREE.LineBasicMaterial({
+                color: 0xffd166,
+                transparent: true,
+                opacity: 0.92,
+                depthWrite: false
+            })
+        );
+        state.launchTrajectoryLine.frustumCulled = false;
+        state.launchTrajectoryLine.visible = false;
+        state.launchTrajectoryFrame.add(state.launchTrajectoryLine);
+
+        state.launchTrajectoryGroundTrackLine = new THREE.Line(
+            new THREE.BufferGeometry(),
+            new THREE.LineDashedMaterial({
+                color: 0x64d8ff,
+                dashSize: 0.12,
+                gapSize: 0.07,
+                transparent: true,
+                opacity: 0.68,
+                depthWrite: false
+            })
+        );
+        state.launchTrajectoryGroundTrackLine.frustumCulled = false;
+        state.launchTrajectoryGroundTrackLine.visible = false;
+        state.earthMesh.add(state.launchTrajectoryGroundTrackLine);
+
+        state.launchTrajectoryOrbitLine = new THREE.Line(
+            new THREE.BufferGeometry(),
+            new THREE.LineDashedMaterial({
+                color: 0xffd166,
+                dashSize: 0.36,
+                gapSize: 0.22,
+                transparent: true,
+                opacity: 0.62,
+                depthWrite: false
+            })
+        );
+        state.launchTrajectoryOrbitLine.frustumCulled = false;
+        state.launchTrajectoryOrbitLine.visible = false;
+        state.launchTrajectoryFrame.add(state.launchTrajectoryOrbitLine);
 
         state.observerMarker = new THREE.Group();
         state.observerMarker.visible = false;
@@ -2187,6 +2309,19 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         return Boolean(launch?.outcome) || when.getTime() <= now;
     }
 
+    function isTerminalLaunch(launch) {
+        const terminalStates = new Set(['success', 'failure', 'cancelled']);
+        const outcome = String(launch?.outcome || '').toLowerCase();
+        const postflightStatus = String(launch?.postflightStatus || '').toLowerCase();
+        return terminalStates.has(outcome) ||
+            terminalStates.has(postflightStatus) ||
+            terminalStates.has(classifyLaunchStatus(launch));
+    }
+
+    function belongsInUpcomingLaunch(launch) {
+        return !isTerminalLaunch(launch);
+    }
+
     function launchStory(launch) {
         if (launch?.missionDescription) return launch.missionDescription;
         if (typeof launch?.mission === 'string' && launch.mission.trim()) return launch.mission.trim();
@@ -2445,6 +2580,413 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         element.classList.add(delta.className);
     }
 
+    function addDays(date, days) {
+        const next = new Date(date);
+        next.setDate(next.getDate() + days);
+        return next;
+    }
+
+    function addMonths(date, months) {
+        const next = new Date(date);
+        next.setMonth(next.getMonth() + months);
+        return next;
+    }
+
+    function launchHistoryForStats() {
+        return state.launchHistoryItems
+            .map((launch) => ({ launch, when: launchInstant(launch) }))
+            .filter((entry) => entry.when && entry.when.getTime() <= Date.now());
+    }
+
+    function successfulLaunchHistoryForStats() {
+        return launchHistoryForStats().filter((entry) => isSuccessfulLaunch(entry.launch));
+    }
+
+    function appendStatMetric(parent, label, value) {
+        const metric = document.createElement('div');
+        metric.className = 'stat-insight-metric';
+        const labelElement = document.createElement('span');
+        labelElement.textContent = label;
+        const valueElement = document.createElement('strong');
+        valueElement.textContent = value;
+        metric.append(labelElement, valueElement);
+        parent.appendChild(metric);
+    }
+
+    function appendStatSummary(parent, metrics) {
+        const summary = document.createElement('div');
+        summary.className = 'stat-insight-summary';
+        metrics.forEach((metric) => appendStatMetric(summary, metric.label, metric.value));
+        parent.appendChild(summary);
+    }
+
+    function appendEmptyStat(parent, text) {
+        const empty = document.createElement('div');
+        empty.className = 'stat-empty';
+        empty.textContent = text;
+        parent.appendChild(empty);
+    }
+
+    function appendBarChart(parent, series) {
+        const max = Math.max(1, ...series.map((entry) => entry.value));
+        const chart = document.createElement('div');
+        chart.className = 'stat-chart';
+        chart.style.gridTemplateColumns = `repeat(${Math.max(1, series.length)}, minmax(0, 1fr))`;
+
+        series.forEach((entry) => {
+            const column = document.createElement('div');
+            column.className = 'stat-chart-column';
+            column.title = `${entry.title || entry.label}: ${entry.value}`;
+
+            const value = document.createElement('div');
+            value.className = 'stat-chart-value';
+            value.textContent = entry.value > 0 ? String(entry.value) : '';
+
+            const bar = document.createElement('div');
+            bar.className = 'stat-chart-bar';
+            bar.style.height = `${Math.max(2, Math.round((entry.value / max) * 100))}%`;
+
+            const label = document.createElement('div');
+            label.className = 'stat-chart-label';
+            label.textContent = entry.label;
+
+            column.append(value, bar, label);
+            chart.appendChild(column);
+        });
+
+        parent.appendChild(chart);
+    }
+
+    function appendLineChart(parent, series) {
+        const chart = document.createElement('div');
+        chart.className = 'stat-line-chart';
+
+        const width = 320;
+        const height = 170;
+        const padding = { top: 16, right: 16, bottom: 30, left: 34 };
+        const values = series.map((entry) => entry.value).filter(Number.isFinite);
+        const min = values.length ? Math.min(...values) : 0;
+        const max = values.length ? Math.max(...values) : 1;
+        const span = Math.max(1, max - min);
+        const plotWidth = width - padding.left - padding.right;
+        const plotHeight = height - padding.top - padding.bottom;
+        const pointFor = (entry, index) => {
+            const x = padding.left + (series.length <= 1 ? plotWidth : (index / (series.length - 1)) * plotWidth);
+            const y = padding.top + plotHeight - ((entry.value - min) / span) * plotHeight;
+            return { x, y };
+        };
+        const points = series.map(pointFor);
+        const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ');
+        const area = points.length
+            ? `${path} L ${points[points.length - 1].x.toFixed(1)} ${padding.top + plotHeight} L ${points[0].x.toFixed(1)} ${padding.top + plotHeight} Z`
+            : '';
+        const labels = series
+            .map((entry, index) => ({ entry, index }))
+            .filter(({ entry, index }) => entry.label && (index === 0 || index === series.length - 1 || index % 6 === 0));
+
+        const svgNs = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNs, 'svg');
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        svg.setAttribute('role', 'img');
+        svg.setAttribute('aria-label', 'Live getrackte Satelliten im Verlauf');
+
+        const gridTop = document.createElementNS(svgNs, 'line');
+        gridTop.setAttribute('x1', String(padding.left));
+        gridTop.setAttribute('x2', String(width - padding.right));
+        gridTop.setAttribute('y1', String(padding.top));
+        gridTop.setAttribute('y2', String(padding.top));
+        gridTop.setAttribute('class', 'stat-line-grid');
+        svg.appendChild(gridTop);
+
+        const gridBottom = document.createElementNS(svgNs, 'line');
+        gridBottom.setAttribute('x1', String(padding.left));
+        gridBottom.setAttribute('x2', String(width - padding.right));
+        gridBottom.setAttribute('y1', String(padding.top + plotHeight));
+        gridBottom.setAttribute('y2', String(padding.top + plotHeight));
+        gridBottom.setAttribute('class', 'stat-line-grid');
+        svg.appendChild(gridBottom);
+
+        if (area) {
+            const areaPath = document.createElementNS(svgNs, 'path');
+            areaPath.setAttribute('d', area);
+            areaPath.setAttribute('class', 'stat-line-area');
+            svg.appendChild(areaPath);
+        }
+
+        if (path) {
+            const linePath = document.createElementNS(svgNs, 'path');
+            linePath.setAttribute('d', path);
+            linePath.setAttribute('class', 'stat-line-path');
+            svg.appendChild(linePath);
+        }
+
+        points.forEach((point, index) => {
+            if (index !== 0 && index !== points.length - 1 && index % 6 !== 0) return;
+            const circle = document.createElementNS(svgNs, 'circle');
+            circle.setAttribute('cx', point.x.toFixed(1));
+            circle.setAttribute('cy', point.y.toFixed(1));
+            circle.setAttribute('r', index === points.length - 1 ? '3.5' : '2.4');
+            circle.setAttribute('class', 'stat-line-point');
+            svg.appendChild(circle);
+        });
+
+        [
+            { text: max.toLocaleString('de-DE'), y: padding.top + 4 },
+            { text: min.toLocaleString('de-DE'), y: padding.top + plotHeight }
+        ].forEach((label) => {
+            const text = document.createElementNS(svgNs, 'text');
+            text.setAttribute('x', '2');
+            text.setAttribute('y', String(label.y));
+            text.setAttribute('class', 'stat-line-axis');
+            text.textContent = label.text;
+            svg.appendChild(text);
+        });
+
+        labels.forEach(({ entry, index }) => {
+            const point = points[index];
+            const text = document.createElementNS(svgNs, 'text');
+            text.setAttribute('x', point.x.toFixed(1));
+            text.setAttribute('y', String(height - 8));
+            text.setAttribute('class', 'stat-line-label');
+            text.textContent = entry.label;
+            svg.appendChild(text);
+        });
+
+        chart.appendChild(svg);
+        parent.appendChild(chart);
+    }
+
+    function appendRanking(parent, rows) {
+        const max = Math.max(1, ...rows.map((row) => row.count));
+        const list = document.createElement('div');
+        list.className = 'stat-ranking-list';
+
+        rows.forEach((row) => {
+            const item = document.createElement('div');
+            item.className = 'stat-ranking-row';
+
+            const name = document.createElement('div');
+            name.className = 'stat-ranking-name';
+            name.textContent = row.name;
+
+            const count = document.createElement('div');
+            count.className = 'stat-ranking-count';
+            count.textContent = String(row.count);
+
+            const bar = document.createElement('div');
+            bar.className = 'stat-ranking-bar';
+            const fill = document.createElement('div');
+            fill.className = 'stat-ranking-fill';
+            fill.style.width = `${Math.max(4, Math.round((row.count / max) * 100))}%`;
+            bar.appendChild(fill);
+
+            item.append(name, count, bar);
+            list.appendChild(item);
+        });
+
+        parent.appendChild(list);
+    }
+
+    function launchPeriodSeries(period, now = new Date()) {
+        const successful = successfulLaunchHistoryForStats();
+        if (period === 'week') {
+            const bounds = periodBounds(now, 'week');
+            const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
+            return Array.from({ length: 7 }, (_, index) => {
+                const start = addDays(bounds.currentStart, index);
+                const end = addDays(start, 1);
+                return {
+                    label: weekday.format(start).replace('.', ''),
+                    title: localShortDateTime.format(start),
+                    value: successful.filter((entry) => entry.when >= start && entry.when < end).length
+                };
+            });
+        }
+
+        if (period === 'month') {
+            const bounds = periodBounds(now, 'month');
+            const end = addMonths(bounds.currentStart, 1);
+            const days = Math.round((end - bounds.currentStart) / 86400000);
+            return Array.from({ length: days }, (_, index) => {
+                const start = addDays(bounds.currentStart, index);
+                const dayEnd = addDays(start, 1);
+                const showLabel = index === 0 || index === days - 1 || start.getDate() % 5 === 0;
+                return {
+                    label: showLabel ? String(start.getDate()) : '',
+                    title: localShortDateTime.format(start),
+                    value: successful.filter((entry) => entry.when >= start && entry.when < dayEnd).length
+                };
+            });
+        }
+
+        const bounds = periodBounds(now, 'year');
+        const monthLabel = new Intl.DateTimeFormat(undefined, { month: 'short' });
+        return Array.from({ length: 12 }, (_, index) => {
+            const start = new Date(bounds.currentStart);
+            start.setMonth(index, 1);
+            const end = addMonths(start, 1);
+            return {
+                label: monthLabel.format(start).replace('.', ''),
+                title: monthLabel.format(start),
+                value: successful.filter((entry) => entry.when >= start && entry.when < end).length
+            };
+        });
+    }
+
+    function renderLaunchPeriodStats(period) {
+        const titleByPeriod = {
+            week: 'Erfolgreich Woche',
+            month: 'Erfolgreich Monat',
+            year: 'Erfolgreich Jahr'
+        };
+        const previousLabelByPeriod = {
+            week: 'Vorwoche',
+            month: 'Vormonat',
+            year: 'Vorjahr'
+        };
+        const stats = state.launchSuccessStats?.[period] || launchSuccessStatsFromItems(state.launchHistoryItems)[period];
+        const body = dom['stat-insight-body'];
+        dom['stat-insight-title'].textContent = titleByPeriod[period] || 'Erfolgreiche Starts';
+        dom['stat-insight-subtitle'].textContent = state.launchHistoryLoading
+            ? 'Starthistorie wird geladen'
+            : `Verlauf aus ${state.launchHistoryItems.length} gespeicherten Starts`;
+        body.replaceChildren();
+        appendStatSummary(body, [
+            { label: 'Aktuell', value: Number.isFinite(stats?.current) ? String(stats.current) : '--' },
+            { label: previousLabelByPeriod[period], value: Number.isFinite(stats?.previous) ? String(stats.previous) : '--' }
+        ]);
+        appendBarChart(body, launchPeriodSeries(period));
+        if (!state.launchHistoryItems.length && state.launchHistoryLoading) {
+            appendEmptyStat(body, 'Lade Startdaten fuer den Verlauf ...');
+        }
+    }
+
+    function renderProviderStats() {
+        const now = Date.now();
+        const since = now - PROVIDER_STATS_WINDOW_DAYS * 86400000;
+        const providerCounts = new Map();
+        launchHistoryForStats().forEach(({ launch, when }) => {
+            const time = when.getTime();
+            if (time < since || time > now) return;
+            const provider = launchOrganization(launch) || 'Unbekannt';
+            providerCounts.set(provider, (providerCounts.get(provider) || 0) + 1);
+        });
+
+        const rows = Array.from(providerCounts, ([name, count]) => ({ name, count }))
+            .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+            .slice(0, 12);
+        const total = Array.from(providerCounts.values()).reduce((sum, count) => sum + count, 0);
+        const body = dom['stat-insight-body'];
+        dom['stat-insight-title'].textContent = 'Anbieter';
+        dom['stat-insight-subtitle'].textContent = `Gesamtstarts der letzten ${PROVIDER_STATS_WINDOW_DAYS} Tage`;
+        body.replaceChildren();
+        appendStatSummary(body, [
+            { label: 'Gesamt', value: total.toLocaleString('de-DE') },
+            { label: 'Anbieter', value: providerCounts.size.toLocaleString('de-DE') }
+        ]);
+        if (rows.length) {
+            appendRanking(body, rows);
+        } else {
+            appendEmptyStat(body, state.launchHistoryLoading ? 'Lade Anbieterstatistik ...' : 'Keine Starts in den letzten 100 Tagen gefunden.');
+        }
+    }
+
+    function renderSatelliteLiveStats() {
+        const body = dom['stat-insight-body'];
+        const history = state.satelliteLiveHistory;
+        const current = state.satelliteCatalogLoaded ? state.satelliteLiveCount : null;
+        const oldest = history[0]?.time || Date.now();
+        const latest = history[history.length - 1]?.time || Date.now();
+        dom['stat-insight-title'].textContent = 'Live getrackt';
+        dom['stat-insight-subtitle'].textContent = history.length > 1
+            ? `${localShortDateTime.format(new Date(oldest))} bis ${localShortDateTime.format(new Date(latest))}`
+            : 'Globaler Worker-Verlauf';
+        body.replaceChildren();
+        appendStatSummary(body, [
+            { label: 'Jetzt', value: Number.isFinite(current) ? current.toLocaleString('de-DE') : '--' },
+            { label: 'Samples', value: history.length.toLocaleString('de-DE') }
+        ]);
+        if (history.length) {
+            const series = history.slice(-48).map((sample, index, samples) => ({
+                label: index === 0 || index === samples.length - 1 || index % 8 === 0
+                    ? localTimeOnly.format(new Date(sample.time)).slice(0, 5)
+                    : '',
+                title: localShortDateTime.format(new Date(sample.time)),
+                value: sample.liveCount
+            }));
+            appendLineChart(body, series);
+        } else {
+            appendEmptyStat(body, 'Noch keine globale Satellitenhistorie geladen.');
+        }
+    }
+
+    function renderStatsPanel() {
+        if (!state.statsPanelOpen || !dom['stat-insight-body']) return;
+        if (state.statsPanelMode === 'providers') {
+            renderProviderStats();
+            return;
+        }
+        if (state.statsPanelMode === 'sat-live') {
+            renderSatelliteLiveStats();
+            return;
+        }
+        const period = state.statsPanelMode.replace('launch-', '');
+        renderLaunchPeriodStats(['week', 'month', 'year'].includes(period) ? period : 'week');
+    }
+
+    async function fetchSatelliteLiveHistory(force = false) {
+        const now = Date.now();
+        if (!force && state.satelliteLiveHistoryFetchedAt && now - state.satelliteLiveHistoryFetchedAt < SATELLITE_FETCH_INTERVAL_MS) {
+            return state.satelliteLiveHistory;
+        }
+        try {
+            const payload = await fetchStaticJson(SATELLITE_LIVE_HISTORY_DATA_URL);
+            state.satelliteLiveHistory = (Array.isArray(payload?.samples) ? payload.samples : [])
+                .map((sample) => ({
+                    time: Date.parse(sample?.timestamp),
+                    liveCount: Number(sample?.liveCount)
+                }))
+                .filter((sample) => Number.isFinite(sample.time) && Number.isFinite(sample.liveCount))
+                .sort((a, b) => a.time - b.time);
+            state.satelliteLiveHistoryGeneratedAt = payload?.generatedAt || '';
+            state.satelliteLiveHistoryFetchedAt = now;
+        } catch (error) {
+            state.satelliteLiveHistoryFetchedAt = now;
+        }
+        if (state.statsPanelOpen && state.statsPanelMode === 'sat-live') renderStatsPanel();
+        return state.satelliteLiveHistory;
+    }
+
+    function openStatsPanel(mode) {
+        state.statsPanelOpen = true;
+        state.statsPanelMode = mode;
+        document.body.classList.add('stat-panel-open');
+        dom['stat-insight-panel']?.setAttribute('aria-hidden', 'false');
+        renderStatsPanel();
+        if ((mode.startsWith('launch-') || mode === 'providers') && !state.launchHistoryItems.length && !state.launchHistoryLoading) {
+            fetchLaunchHistoryPage().then(renderStatsPanel);
+        }
+        if (mode === 'sat-live' && !state.satelliteLiveHistory.length) {
+            fetchSatelliteLiveHistory().then(renderStatsPanel);
+        }
+        if (isMobileViewport()) {
+            openMobilePanel('stats');
+        } else {
+            applyMobilePanelState();
+        }
+    }
+
+    function closeStatsPanel() {
+        state.statsPanelOpen = false;
+        state.statsPanelMode = '';
+        document.body.classList.remove('stat-panel-open');
+        dom['stat-insight-panel']?.setAttribute('aria-hidden', 'true');
+        if (state.mobileActivePanel === 'stats') {
+            state.mobileActivePanel = null;
+        }
+        applyMobilePanelState();
+    }
+
     function updateLaunchSuccessStatsUi() {
         const stats = state.launchSuccessStats;
         if (!stats) {
@@ -2463,6 +3005,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         setStatDelta('launch-stat-success-week-delta', formatLaunchDelta(stats.week.current, stats.week.previous, 'Vorwoche'));
         setStatDelta('launch-stat-success-month-delta', formatLaunchDelta(stats.month.current, stats.month.previous, 'Vormonat'));
         setStatDelta('launch-stat-success-year-delta', formatLaunchDelta(stats.year.current, stats.year.previous, 'Vorjahr'));
+        if (state.statsPanelOpen && state.statsPanelMode.startsWith('launch-')) renderStatsPanel();
     }
 
     function updateLaunchFeedModeUi() {
@@ -2530,7 +3073,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             item.append(title, meta, rocket, pad, when, badge);
             item.addEventListener('click', () => {
                 state.launchWatchList.set(launchKey(launch), launch);
-                selectLaunch(launchKey(launch), false);
+                selectLaunch(launchKey(launch), true);
             });
             dom['launch-feed-items'].appendChild(item);
         });
@@ -2577,6 +3120,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             state.launchHistoryLoading = false;
             updateLaunchHistoryStatus();
             renderLaunchHistory(state.launchHistoryItems);
+            if (state.statsPanelOpen && (state.statsPanelMode.startsWith('launch-') || state.statsPanelMode === 'providers')) {
+                renderStatsPanel();
+            }
         }
     }
 
@@ -2694,6 +3240,24 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         return monitoredLaunches()[0] || null;
     }
 
+    function launchMarkerLaunches() {
+        const markerLaunches = [];
+        const seen = new Set();
+        const addLaunch = (launch) => {
+            if (!launch || !isEarthLaunch(launch)) return;
+            const key = launchKey(launch);
+            if (seen.has(key)) return;
+            seen.add(key);
+            markerLaunches.push(launch);
+        };
+
+        state.launches.forEach(addLaunch);
+        if (state.selectedLaunchId && state.launchWatchList.has(state.selectedLaunchId)) {
+            addLaunch(state.launchWatchList.get(state.selectedLaunchId));
+        }
+        return markerLaunches;
+    }
+
     function refreshSelectedLaunchUi() {
         const launch = state.selectedLaunchId || state.launchDetailActive ? getSelectedLaunch() : null;
         document.querySelectorAll('.launch-item[data-launch-id]').forEach((item) => {
@@ -2704,6 +3268,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         });
         if (!launch) {
             updateLaunchStreamUi(null);
+            clearLaunchTrajectory();
             if (dom['watch-launch-title']) dom['watch-launch-title'].textContent = 'Ausgewaehlter Start';
             if (dom['watch-launch-subtitle']) dom['watch-launch-subtitle'].textContent = '--';
             if (dom['watch-launch-intel']) dom['watch-launch-intel'].textContent = 'Waehle rechts im Launch Feed einen Start aus.';
@@ -2730,6 +3295,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         dom['watch-launch-story'].textContent = launchStory(launch);
         if (dom['watch-launch-intel']) dom['watch-launch-intel'].textContent = launchIntelText(launch);
         updateLaunchStreamUi(launch);
+        updateSelectedLaunchTrajectory(launch);
 
         const externalUrl = launchExternalUrl(launch);
         if (externalUrl) {
@@ -2744,6 +3310,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     function selectLaunch(launchId, focus) {
         state.selectedLaunchId = launchId;
         state.launchDetailActive = true;
+        rebuildLaunchMarkers();
         applyLaunchDetailPanelState();
         refreshSelectedLaunchUi();
         const keepSatelliteContext = isMobileViewport() && Boolean(state.followSatelliteId);
@@ -2783,6 +3350,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             const payload = await fetchStaticJson(LAUNCH_FEED_DATA_URL);
             const launches = (Array.isArray(payload?.launches) ? payload.launches : [])
                 .filter(isEarthLaunch)
+                .filter(belongsInUpcomingLaunch)
                 .sort((a, b) => {
                     const ta = launchInstant(a);
                     const tb = launchInstant(b);
@@ -2872,6 +3440,440 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             radius * Math.cos(phi),
             radius * Math.sin(phi) * Math.sin(theta)
         );
+    }
+
+    function normalizeLongitude(lon) {
+        return THREE.MathUtils.euclideanModulo(lon + 540, 360) - 180;
+    }
+
+    function destinationLatLon(latDeg, lonDeg, bearingDeg, angularDistanceDeg) {
+        const lat = THREE.MathUtils.degToRad(latDeg);
+        const lon = THREE.MathUtils.degToRad(lonDeg);
+        const bearing = THREE.MathUtils.degToRad(bearingDeg);
+        const angularDistance = THREE.MathUtils.degToRad(angularDistanceDeg);
+        const sinLat = Math.sin(lat);
+        const cosLat = Math.cos(lat);
+        const sinDistance = Math.sin(angularDistance);
+        const cosDistance = Math.cos(angularDistance);
+        const lat2 = Math.asin(
+            sinLat * cosDistance +
+            cosLat * sinDistance * Math.cos(bearing)
+        );
+        const lon2 = lon + Math.atan2(
+            Math.sin(bearing) * sinDistance * cosLat,
+            cosDistance - sinLat * Math.sin(lat2)
+        );
+        return {
+            lat: THREE.MathUtils.radToDeg(lat2),
+            lon: normalizeLongitude(THREE.MathUtils.radToDeg(lon2))
+        };
+    }
+
+    function launchTrajectoryReferenceMs(launch) {
+        const when = launchInstant(launch);
+        return when ? when.getTime() : earthReferenceTimeMs();
+    }
+
+    function earthFixedToInertial(localPosition, dateMs) {
+        return localPosition.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), earthRotationAngleForMs(dateMs));
+    }
+
+    function inertialToEarthFixed(inertialPosition, dateMs) {
+        return inertialPosition.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), -earthRotationAngleForMs(dateMs));
+    }
+
+    function launchAscentDurationMs(profile) {
+        if (profile.kind === 'suborbital') {
+            return profile.downrangeDeg > 60 ? 45 * 60 * 1000 : 14 * 60 * 1000;
+        }
+        return Number.isFinite(profile.transferApogeeKm) ? 11.5 * 60 * 1000 : 9 * 60 * 1000;
+    }
+
+    function orbitPeriodMsForSemiMajorRadius(radius) {
+        const radiusKm = Math.max(WGS84_EARTH_RADIUS_KM + 120, radius * 1000);
+        return 2 * Math.PI * Math.sqrt((radiusKm ** 3) / EARTH_MU_KM3_S2) * 1000;
+    }
+
+    function launchTrajectoryText(launch) {
+        const missionName = typeof launch?.mission === 'string'
+            ? launch.mission
+            : launch?.mission?.name;
+        const orbitName = typeof launch?.orbit === 'string'
+            ? launch.orbit
+            : launch?.orbit?.name;
+        return [
+            launch?.name,
+            launchRocketName(launch),
+            launchOrganization(launch),
+            missionName,
+            launch?.missionDescription,
+            orbitName,
+            launch?.mission?.orbit?.name,
+            launch?.mission?.orbit?.abbrev,
+            launch?.padLocation,
+            launchPadLabel(launch)
+        ].filter((value) => typeof value === 'string' && value.trim())
+            .join(' ')
+            .toLowerCase();
+    }
+
+    function launchOrbitText(launch) {
+        const orbitName = typeof launch?.orbit === 'string'
+            ? launch.orbit
+            : launch?.orbit?.name;
+        return [
+            orbitName,
+            launch?.orbit?.abbrev,
+            launch?.mission?.orbit?.name,
+            launch?.mission?.orbit?.abbrev
+        ].filter((value) => typeof value === 'string' && value.trim())
+            .join(' ')
+            .toLowerCase();
+    }
+
+    function extractAltitudeKm(text) {
+        const values = [];
+        for (const match of text.matchAll(/(\d+(?:[.,]\d+)?)\s*km\b/g)) {
+            const value = parseFloat(match[1].replace(',', '.'));
+            if (Number.isFinite(value) && value >= 100 && value <= 60000) {
+                values.push(value);
+            }
+        }
+        if (!values.length) return NaN;
+        values.sort((a, b) => a - b);
+        return values[Math.floor(values.length / 2)];
+    }
+
+    function clampReachableInclination(inclinationDeg, latDeg) {
+        const minInclination = Math.min(89.5, Math.abs(latDeg));
+        if (!Number.isFinite(inclinationDeg)) return Math.max(minInclination, 28.5);
+        return THREE.MathUtils.clamp(inclinationDeg, minInclination, 116);
+    }
+
+    function prefersNorthboundPolarLaunch(text, latDeg) {
+        if (/plesetsk|vostochny|baikonur/.test(text)) return true;
+        if (/vandenberg|mahia|wallops|kennedy|cape canaveral|rocket lab|tanegashima|xichang|taiyuan|jiuquan|wenchang/.test(text)) {
+            return false;
+        }
+        return latDeg > 55;
+    }
+
+    function suborbitalLaunchAzimuth(text, latDeg, lonDeg) {
+        if (/starship|super heavy|starbase|boca chica/.test(text)) return 95;
+        if (/wallops|virginia|haste|hypersonic/.test(text)) return 105;
+        if (/vandenberg/.test(text)) return 190;
+        if (/mahia|rocket lab launch complex 1/.test(text)) return 125;
+        if (/kourou|french guiana/.test(text)) return 80;
+        if (latDeg > 0 && lonDeg < -20) return 95;
+        return latDeg < 0 ? 70 : 90;
+    }
+
+    function launchAzimuthForInclination(latDeg, lonDeg, inclinationDeg, launch, text) {
+        if (!Number.isFinite(inclinationDeg)) {
+            return suborbitalLaunchAzimuth(text, latDeg, lonDeg);
+        }
+        const latRad = THREE.MathUtils.degToRad(latDeg);
+        const incRad = THREE.MathUtils.degToRad(inclinationDeg);
+        const ratio = THREE.MathUtils.clamp(Math.cos(incRad) / Math.max(0.01, Math.cos(latRad)), -1, 1);
+        const branch = THREE.MathUtils.radToDeg(Math.asin(ratio));
+        const northbound = THREE.MathUtils.euclideanModulo(branch, 360);
+        const southbound = THREE.MathUtils.euclideanModulo(180 - branch, 360);
+
+        if (/vandenberg|space launch complex 4e|slc-4|vsfb/.test(text)) {
+            return southbound;
+        }
+        if (inclinationDeg >= 88.5) {
+            return prefersNorthboundPolarLaunch(text, latDeg) ? northbound : southbound;
+        }
+        if (latDeg < -1) return southbound;
+        return northbound;
+    }
+
+    function inferLaunchTrajectoryProfile(launch) {
+        const text = launchTrajectoryText(launch);
+        const orbitText = launchOrbitText(launch);
+        const lat = launchLatitude(launch);
+        const lon = launchLongitude(launch);
+        const explicitAltitudeKm = extractAltitudeKm(text);
+        const absLat = Math.abs(lat);
+        const profile = {
+            kind: 'orbital',
+            targetAltitudeKm: Number.isFinite(explicitAltitudeKm) ? explicitAltitudeKm : 420,
+            insertionAltitudeKm: 210,
+            transferApogeeKm: NaN,
+            inclinationDeg: Math.max(absLat, 51.6),
+            downrangeDeg: 23,
+            orbitPreviewRevolutions: 0.72
+        };
+
+        if (/sub.?orbital/.test(orbitText)) {
+            const starship = /starship|super heavy|starbase|boca chica/.test(text);
+            const hypersonic = /haste|hypersonic/.test(text);
+            profile.kind = 'suborbital';
+            profile.targetAltitudeKm = Number.isFinite(explicitAltitudeKm)
+                ? explicitAltitudeKm
+                : starship ? 220 : hypersonic ? 150 : 120;
+            profile.insertionAltitudeKm = profile.targetAltitudeKm;
+            profile.inclinationDeg = NaN;
+            profile.downrangeDeg = starship ? 142 : hypersonic ? 12 : 7;
+            profile.orbitPreviewRevolutions = 0;
+        } else if (/geostationary transfer|\bgto\b/.test(orbitText)) {
+            profile.targetAltitudeKm = 35786;
+            profile.transferApogeeKm = 35786;
+            profile.insertionAltitudeKm = 185;
+            profile.inclinationDeg = Math.max(absLat, 27);
+            profile.downrangeDeg = 29;
+        } else if (/geostationary|\bgeo\b/.test(orbitText)) {
+            profile.targetAltitudeKm = 35786;
+            profile.transferApogeeKm = 35786;
+            profile.insertionAltitudeKm = 185;
+            profile.inclinationDeg = Math.max(absLat, 0);
+            profile.downrangeDeg = 29;
+        } else if (/medium earth|\bmeo\b/.test(orbitText) || /gps|galileo|glonass|beidou/.test(text)) {
+            profile.targetAltitudeKm = Number.isFinite(explicitAltitudeKm) ? explicitAltitudeKm : 20200;
+            profile.transferApogeeKm = profile.targetAltitudeKm;
+            profile.insertionAltitudeKm = 185;
+            profile.inclinationDeg = /gps/.test(text) ? 55 : 56;
+            profile.downrangeDeg = 28;
+        } else if (/elliptical|highly elliptical|\bheo\b/.test(orbitText) || /molniya/.test(text)) {
+            profile.targetAltitudeKm = Number.isFinite(explicitAltitudeKm) ? explicitAltitudeKm : 12000;
+            profile.transferApogeeKm = profile.targetAltitudeKm;
+            profile.insertionAltitudeKm = 185;
+            profile.inclinationDeg = /molniya/.test(text) ? 63.4 : Math.max(absLat, 51.6);
+            profile.downrangeDeg = 27;
+        } else if (/sun.?synchronous|\bsso\b/.test(orbitText)) {
+            profile.targetAltitudeKm = Number.isFinite(explicitAltitudeKm) ? explicitAltitudeKm : 600;
+            profile.insertionAltitudeKm = THREE.MathUtils.clamp(profile.targetAltitudeKm * 0.82, 360, 620);
+            profile.inclinationDeg = 97.5;
+            profile.downrangeDeg = 22;
+        } else if (/polar/.test(orbitText)) {
+            profile.targetAltitudeKm = Number.isFinite(explicitAltitudeKm) ? explicitAltitudeKm : 600;
+            profile.insertionAltitudeKm = THREE.MathUtils.clamp(profile.targetAltitudeKm * 0.78, 300, 620);
+            profile.inclinationDeg = 90;
+            profile.downrangeDeg = 21;
+        } else if (/iss|international space station|cargo dragon|crew dragon|cygnus|tiangong/.test(text)) {
+            profile.targetAltitudeKm = Number.isFinite(explicitAltitudeKm) ? explicitAltitudeKm : 420;
+            profile.insertionAltitudeKm = 210;
+            profile.inclinationDeg = /tiangong/.test(text) ? 41.5 : 51.64;
+            profile.downrangeDeg = 24;
+        } else if (/starlink/.test(text)) {
+            profile.targetAltitudeKm = Number.isFinite(explicitAltitudeKm) ? explicitAltitudeKm : 550;
+            profile.insertionAltitudeKm = 290;
+            profile.inclinationDeg = /vandenberg|space launch complex 4e|group 17/.test(text) ? 70 : 53;
+            profile.downrangeDeg = 25;
+        } else if (/kuiper|amazon leo/.test(text)) {
+            profile.targetAltitudeKm = Number.isFinite(explicitAltitudeKm) ? explicitAltitudeKm : 610;
+            profile.insertionAltitudeKm = 320;
+            profile.inclinationDeg = 51.9;
+            profile.downrangeDeg = 24;
+        } else if (/low earth|\bleo\b/.test(orbitText)) {
+            profile.targetAltitudeKm = Number.isFinite(explicitAltitudeKm) ? explicitAltitudeKm : 500;
+            profile.insertionAltitudeKm = THREE.MathUtils.clamp(profile.targetAltitudeKm * 0.65, 210, 520);
+            profile.inclinationDeg = Math.max(absLat, 51.6);
+            profile.downrangeDeg = 23;
+        } else if (/unknown/.test(orbitText)) {
+            profile.targetAltitudeKm = 420;
+            profile.insertionAltitudeKm = 210;
+            profile.inclinationDeg = Math.max(absLat, 45);
+            profile.downrangeDeg = 21;
+            profile.orbitPreviewRevolutions = 0.45;
+        }
+
+        profile.inclinationDeg = clampReachableInclination(profile.inclinationDeg, lat);
+        profile.azimuthDeg = profile.kind === 'suborbital'
+            ? suborbitalLaunchAzimuth(text, lat, lon)
+            : launchAzimuthForInclination(lat, lon, profile.inclinationDeg, launch, text);
+        return profile;
+    }
+
+    function ascentAltitudeKm(profile, t) {
+        const clamped = THREE.MathUtils.clamp(t, 0, 1);
+        if (profile.kind === 'suborbital') {
+            return profile.targetAltitudeKm * Math.pow(Math.sin(Math.PI * clamped), 0.86);
+        }
+        const gravityTurn = (1 - Math.exp(-4.25 * clamped)) / (1 - Math.exp(-4.25));
+        return profile.insertionAltitudeKm * gravityTurn;
+    }
+
+    function buildLaunchAscentPath(launch, profile, referenceMs) {
+        const lat = launchLatitude(launch);
+        const lon = launchLongitude(launch);
+        const ascentPoints = [];
+        const groundTrackPoints = [];
+        const groundTrackRadius = ARTEMIS.EARTH_RADIUS * 1.018;
+        const ascentDurationMs = launchAscentDurationMs(profile);
+        for (let i = 0; i <= LAUNCH_ASCENT_SAMPLE_COUNT; i += 1) {
+            const t = i / LAUNCH_ASCENT_SAMPLE_COUNT;
+            const downrangeT = profile.kind === 'suborbital' ? t : Math.pow(t, 1.42);
+            const ground = destinationLatLon(lat, lon, profile.azimuthDeg, profile.downrangeDeg * downrangeT);
+            const altitudeKm = ascentAltitudeKm(profile, t);
+            const sampleMs = referenceMs + ascentDurationMs * t;
+            const localPoint = latLonToVector3(ground.lat, ground.lon, ARTEMIS.EARTH_RADIUS + altitudeKm / 1000);
+            ascentPoints.push(earthFixedToInertial(localPoint, sampleMs));
+            groundTrackPoints.push(latLonToVector3(ground.lat, ground.lon, groundTrackRadius));
+        }
+        return { ascentPoints, groundTrackPoints, ascentDurationMs };
+    }
+
+    function launchOrbitBasis(ascentPoints) {
+        const insertion = ascentPoints[ascentPoints.length - 1]?.clone();
+        if (!insertion) return null;
+        const radial = insertion.clone().normalize();
+        let tangent = insertion.clone().sub(ascentPoints[Math.max(0, ascentPoints.length - 5)] || insertion);
+        tangent.sub(radial.clone().multiplyScalar(tangent.dot(radial)));
+        if (tangent.lengthSq() < 1e-8) {
+            tangent = new THREE.Vector3(0, 1, 0).cross(radial);
+        }
+        if (tangent.lengthSq() < 1e-8) {
+            tangent = new THREE.Vector3(1, 0, 0).cross(radial);
+        }
+        tangent.normalize();
+        const normal = new THREE.Vector3().crossVectors(radial, tangent).normalize();
+        const correctedTangent = new THREE.Vector3().crossVectors(normal, radial).normalize();
+        return { radial, tangent: correctedTangent };
+    }
+
+    function transferElapsedMs(trueAnomaly, eccentricity, periodMs) {
+        if (trueAnomaly <= 0) return 0;
+        const halfAngle = trueAnomaly / 2;
+        const eccentricAnomaly = 2 * Math.atan2(
+            Math.sqrt(1 - eccentricity) * Math.sin(halfAngle),
+            Math.sqrt(1 + eccentricity) * Math.cos(halfAngle)
+        );
+        const normalizedEccentricAnomaly = eccentricAnomaly < 0
+            ? eccentricAnomaly + Math.PI * 2
+            : eccentricAnomaly;
+        const meanAnomaly = normalizedEccentricAnomaly - eccentricity * Math.sin(normalizedEccentricAnomaly);
+        return (meanAnomaly / (Math.PI * 2)) * periodMs;
+    }
+
+    function buildLaunchOrbitSamples(profile, ascentPoints, revolutions, options = {}) {
+        if (profile.kind === 'suborbital' || revolutions <= 0) return [];
+        const basis = launchOrbitBasis(ascentPoints);
+        if (!basis) return [];
+        const samples = [];
+
+        if (Number.isFinite(profile.transferApogeeKm)) {
+            const rp = ascentPoints[ascentPoints.length - 1].length();
+            const ra = ARTEMIS.EARTH_RADIUS + profile.transferApogeeKm / 1000;
+            const semiMajor = (rp + ra) / 2;
+            const eccentricity = THREE.MathUtils.clamp((ra - rp) / (ra + rp), 0, 0.95);
+            const periodMs = orbitPeriodMsForSemiMajorRadius(semiMajor);
+            const transferFraction = THREE.MathUtils.clamp(options.transferFraction ?? revolutions * 0.35, 0.05, 1);
+            const maxTrueAnomaly = Math.PI * transferFraction;
+            for (let i = 0; i <= LAUNCH_ORBIT_PREVIEW_SAMPLE_COUNT; i += 1) {
+                const trueAnomaly = maxTrueAnomaly * (i / LAUNCH_ORBIT_PREVIEW_SAMPLE_COUNT);
+                const radius = semiMajor * (1 - eccentricity * eccentricity) /
+                    (1 + eccentricity * Math.cos(trueAnomaly));
+                samples.push({
+                    position: basis.radial.clone().multiplyScalar(Math.cos(trueAnomaly) * radius)
+                        .add(basis.tangent.clone().multiplyScalar(Math.sin(trueAnomaly) * radius)),
+                    elapsedMs: transferElapsedMs(trueAnomaly, eccentricity, periodMs)
+                });
+            }
+            return samples;
+        }
+
+        const startRadius = ascentPoints[ascentPoints.length - 1].length();
+        const targetRadius = ARTEMIS.EARTH_RADIUS + profile.targetAltitudeKm / 1000;
+        const periodMs = orbitPeriodMsForSemiMajorRadius(targetRadius);
+        const sampleCount = Math.max(24, Math.floor(LAUNCH_ORBIT_PREVIEW_SAMPLE_COUNT * revolutions));
+        const maxAngle = Math.PI * 2 * revolutions;
+        for (let i = 0; i <= sampleCount; i += 1) {
+            const angle = maxAngle * (i / sampleCount);
+            const raiseT = Math.min(1, angle / Math.max(0.001, Math.PI * 0.58));
+            const radius = THREE.MathUtils.lerp(
+                startRadius,
+                targetRadius,
+                1 - Math.pow(1 - raiseT, 3)
+            );
+            samples.push({
+                position: basis.radial.clone().multiplyScalar(Math.cos(angle) * radius)
+                    .add(basis.tangent.clone().multiplyScalar(Math.sin(angle) * radius)),
+                elapsedMs: (angle / (Math.PI * 2)) * periodMs
+            });
+        }
+        return samples;
+    }
+
+    function buildLaunchOrbitPreviewPath(profile, ascentPoints) {
+        return buildLaunchOrbitSamples(profile, ascentPoints, profile.orbitPreviewRevolutions, {
+            transferFraction: 0.58
+        }).map((sample) => sample.position);
+    }
+
+    function buildLaunchGroundTrackExtension(profile, ascentPoints, referenceMs, ascentDurationMs) {
+        const revolutions = clampLaunchGroundTrackRevolutions(state.panelVisibility.launchGroundTrackRevolutions);
+        const transferFraction = Number.isFinite(profile.transferApogeeKm)
+            ? Math.min(1, 0.35 * revolutions)
+            : undefined;
+        const orbitSamples = buildLaunchOrbitSamples(profile, ascentPoints, revolutions, { transferFraction });
+        const groundTrackRadius = ARTEMIS.EARTH_RADIUS * 1.018;
+        return orbitSamples.map((sample) => {
+            const local = inertialToEarthFixed(sample.position, referenceMs + ascentDurationMs + sample.elapsedMs);
+            return local.normalize().multiplyScalar(groundTrackRadius);
+        });
+    }
+
+    function setLaunchLinePoints(line, points) {
+        if (!line) return;
+        line.geometry.dispose();
+        line.geometry = new THREE.BufferGeometry().setFromPoints(points);
+        line.visible = points.length >= 2;
+        if (line.visible) line.computeLineDistances();
+    }
+
+    function syncLaunchTrajectoryFrame() {
+        if (!state.launchTrajectoryFrame || !state.launchTrajectoryEventMs) return;
+        const displayRotation = earthRotationAngleForMs(earthReferenceTimeMs());
+        const eventRotation = earthRotationAngleForMs(state.launchTrajectoryEventMs);
+        state.launchTrajectoryFrame.rotation.y = displayRotation - eventRotation;
+    }
+
+    function clearLaunchTrajectory() {
+        state.launchTrajectoryKey = '';
+        state.launchTrajectoryEventMs = 0;
+        if (state.launchTrajectoryFrame) state.launchTrajectoryFrame.rotation.y = 0;
+        [state.launchTrajectoryLine, state.launchTrajectoryGroundTrackLine, state.launchTrajectoryOrbitLine]
+            .forEach((line) => {
+                if (line) line.visible = false;
+            });
+        updateSatelliteLayerOpacity();
+    }
+
+    function updateSelectedLaunchTrajectory(launch) {
+        if (!launch || !isEarthLaunch(launch)) {
+            clearLaunchTrajectory();
+            return;
+        }
+        const profile = inferLaunchTrajectoryProfile(launch);
+        const groundTrackRevolutions = clampLaunchGroundTrackRevolutions(state.panelVisibility.launchGroundTrackRevolutions);
+        const key = [
+            launchKey(launch),
+            launchLatitude(launch).toFixed(5),
+            launchLongitude(launch).toFixed(5),
+            profile.kind,
+            Math.round(profile.azimuthDeg * 10),
+            Math.round(profile.inclinationDeg * 10),
+            Math.round(profile.targetAltitudeKm),
+            Math.round(profile.insertionAltitudeKm),
+            Math.round(Number.isFinite(profile.transferApogeeKm) ? profile.transferApogeeKm : 0),
+            groundTrackRevolutions,
+            Math.floor(launchTrajectoryReferenceMs(launch) / 60000)
+        ].join(':');
+        if (state.launchTrajectoryKey === key) return;
+
+        const referenceMs = launchTrajectoryReferenceMs(launch);
+        const { ascentPoints, groundTrackPoints, ascentDurationMs } = buildLaunchAscentPath(launch, profile, referenceMs);
+        const orbitPreviewPoints = buildLaunchOrbitPreviewPath(profile, ascentPoints);
+        const groundTrackExtensionPoints = buildLaunchGroundTrackExtension(profile, ascentPoints, referenceMs, ascentDurationMs);
+        setLaunchLinePoints(state.launchTrajectoryLine, ascentPoints);
+        setLaunchLinePoints(state.launchTrajectoryGroundTrackLine, groundTrackPoints.concat(groundTrackExtensionPoints.slice(1)));
+        setLaunchLinePoints(state.launchTrajectoryOrbitLine, orbitPreviewPoints);
+        state.launchTrajectoryEventMs = referenceMs;
+        syncLaunchTrajectoryFrame();
+        state.launchTrajectoryKey = key;
+        updateSatelliteLayerOpacity();
     }
 
     function updateObserverMarker() {
@@ -3709,15 +4711,19 @@ LIMIT 1`;
             writeUiState();
         }
 
-        if (state.satellitePoints?.material) {
-            state.satellitePoints.material.opacity = isFollowingSatellite
-                ? SATELLITE_LAYER_DIMMED_OPACITY
-                : SATELLITE_LAYER_OPACITY;
-            state.satellitePoints.material.needsUpdate = true;
-        }
+        updateSatelliteLayerOpacity(isFollowingSatellite);
         updateSatelliteFocusPanel(followedSatellite);
         updateSatelliteHighlight(performance.now());
         updateSatelliteOrbitPath();
+    }
+
+    function updateSatelliteLayerOpacity(isFollowingSatellite = Boolean(state.followSatelliteId)) {
+        if (!state.satellitePoints?.material) return;
+        const launchTrajectoryActive = Boolean(state.selectedLaunchId && state.launchTrajectoryLine?.visible);
+        state.satellitePoints.material.opacity = (isFollowingSatellite || launchTrajectoryActive)
+            ? SATELLITE_LAYER_DIMMED_OPACITY
+            : SATELLITE_LAYER_OPACITY;
+        state.satellitePoints.material.needsUpdate = true;
     }
 
     function updateSatelliteFocusPanel(satellite) {
@@ -4037,6 +5043,7 @@ LIMIT 1`;
             state.satelliteCatalogLoaded = true;
             rebuildSatelliteLayer();
             propagateSatellites(true);
+            fetchSatelliteLiveHistory(true);
             renderSatelliteSearchResults();
         } catch (error) {
             const cached = readSatelliteCache();
@@ -4064,9 +5071,13 @@ LIMIT 1`;
         updateSatelliteStats();
         await ensureSatelliteLibrary();
         loadIssOemData();
+        fetchSatelliteLiveHistory();
         fetchSatelliteCatalog();
         if (state.satelliteFetchTimer) clearInterval(state.satelliteFetchTimer);
-        state.satelliteFetchTimer = setInterval(fetchSatelliteCatalog, SATELLITE_FETCH_INTERVAL_MS);
+        state.satelliteFetchTimer = setInterval(() => {
+            fetchSatelliteCatalog();
+            fetchSatelliteLiveHistory(true);
+        }, SATELLITE_FETCH_INTERVAL_MS);
     }
 
     function rebuildLaunchMarkers() {
@@ -4076,9 +5087,9 @@ LIMIT 1`;
         }
         state.launchMarkers.clear();
 
-        state.launches.forEach((launch, index) => {
-            const lat = parseFloat(launch?.pad?.latitude);
-            const lon = parseFloat(launch?.pad?.longitude);
+        launchMarkerLaunches().forEach((launch, index) => {
+            const lat = launchLatitude(launch);
+            const lon = launchLongitude(launch);
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
 
             const launchId = launchKey(launch);
@@ -4104,6 +5115,9 @@ LIMIT 1`;
 
             group.add(stem);
             group.add(head);
+            group.frustumCulled = false;
+            stem.frustumCulled = false;
+            head.frustumCulled = false;
             group.userData.active = launchId === state.selectedLaunchId;
             state.launchMarkerRoot.add(group);
             state.launchMarkers.set(launchId, { group, pickMesh: head, normal });
@@ -4129,6 +5143,32 @@ LIMIT 1`;
             position,
             normal: position.clone().normalize()
         };
+    }
+
+    function frameLaunchMarker(worldData) {
+        if (!state.camera || !state.controls || !worldData?.position) return;
+        const target = worldData.position.clone();
+        const normal = worldData.normal?.lengthSq() > 1e-6
+            ? worldData.normal.clone().normalize()
+            : target.clone().normalize();
+        const currentOffset = state.camera.position.clone().sub(state.controls.target);
+        let side = currentOffset.sub(normal.clone().multiplyScalar(currentOffset.dot(normal)));
+        if (side.lengthSq() < 1e-6) {
+            side = new THREE.Vector3(0, 1, 0).cross(normal);
+        }
+        if (side.lengthSq() < 1e-6) {
+            side = new THREE.Vector3(1, 0, 0).cross(normal);
+        }
+        const viewDirection = normal
+            .clone()
+            .multiplyScalar(0.94)
+            .add(side.normalize().multiplyScalar(0.2))
+            .normalize();
+
+        state.controls.target.copy(target);
+        state.camera.position.copy(target).add(viewDirection.multiplyScalar(LAUNCH_FOCUS_VIEW_DISTANCE));
+        state.camera.updateProjectionMatrix();
+        state.controls.update();
     }
 
     function getObserverWorldPosition() {
@@ -4283,7 +5323,7 @@ LIMIT 1`;
         const world = getLaunchMarkerWorldData(launchId);
         if (!world) return;
         exitFreeCamera();
-        state.focusLaunchId = null;
+        state.focusLaunchId = launchId;
         state.focusedBody = null;
         state.followObserver = false;
         state.followSatelliteId = null;
@@ -4293,7 +5333,7 @@ LIMIT 1`;
         dom['observer-view-btn']?.classList.remove('active');
         dom['moon-view-btn']?.classList.remove('active');
         dom['follow-artemis']?.classList.remove('active');
-        setFocusTarget(world.position);
+        frameLaunchMarker(world);
     }
 
     function focusFromPick(kind, planetIndex) {
@@ -4766,6 +5806,10 @@ LIMIT 1`;
             state.flyKeys[event.key] = true;
         }
         if (event.key === 'Escape') {
+            if (state.statsPanelOpen) {
+                closeStatsPanel();
+                return;
+            }
             if (state.mobileActivePanel) {
                 closeMobileSheet();
                 return;
@@ -4822,6 +5866,7 @@ LIMIT 1`;
 
         updateSolarSystem(sceneTimeMs());
         updateEarthRotation(earthReferenceTimeMs());
+        syncLaunchTrajectoryFrame();
 
         const rawMet = ARTEMIS.getMET(sceneTimeMs());
         const clampedMet = THREE.MathUtils.clamp(rawMet, 0, state.totalMissionHours);
@@ -4850,6 +5895,15 @@ LIMIT 1`;
                     const previousTarget = state.controls.target.clone();
                     state.controls.target.lerp(satelliteWorld, 0.32);
                     state.camera.position.add(state.controls.target.clone().sub(previousTarget));
+                }
+            } else if (!state.userNavigatingCamera && state.focusLaunchId) {
+                const launchWorld = getLaunchMarkerWorldData(state.focusLaunchId);
+                if (launchWorld) {
+                    const previousTarget = state.controls.target.clone();
+                    state.controls.target.lerp(launchWorld.position, 0.22);
+                    state.camera.position.add(state.controls.target.clone().sub(previousTarget));
+                } else {
+                    state.focusLaunchId = null;
                 }
             } else if (!state.userNavigatingCamera && state.focusedBody) {
                 const target = new THREE.Vector3();
