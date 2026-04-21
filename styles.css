@@ -1108,6 +1108,11 @@ body.satellite-following .panel-restore-right {
     font-size: 11px;
 }
 
+#mobile-dock,
+.mobile-sheet-scrim {
+    display: none;
+}
+
 body.hide-news #launch-feed-panel,
 body.hide-watch #overview-panel,
 body.hide-watch #mission-control-panel,
@@ -1234,5 +1239,335 @@ body.hide-controls .panel-restore-bottom {
 
     .panel-restore-tab {
         display: none !important;
+    }
+}
+
+@media (max-width: 960px) {
+    html,
+    body {
+        height: 100%;
+        overflow: hidden;
+    }
+
+    #topbar {
+        position: fixed;
+        top: max(10px, env(safe-area-inset-top));
+        left: 12px;
+        right: 12px;
+        z-index: 11;
+        flex-direction: row;
+        align-items: center;
+        margin: 0;
+        gap: 12px;
+        pointer-events: none;
+    }
+
+    .brand-stack h1 {
+        max-width: 54vw;
+        margin: 0;
+        font-size: 20px;
+        line-height: 1;
+        overflow-wrap: anywhere;
+    }
+
+    .topbar-side {
+        margin-left: auto;
+        gap: 8px;
+    }
+
+    .topbar-time {
+        display: none;
+    }
+
+    .icon-btn {
+        width: 42px;
+        height: 42px;
+        flex: 0 0 auto;
+    }
+
+    #canvas-container {
+        position: fixed;
+        inset: 0;
+    }
+
+    #overview-panel,
+    #mission-control-panel,
+    #launch-feed-panel,
+    #satellite-focus-panel,
+    #controls-panel {
+        position: fixed;
+        top: auto;
+        right: 10px;
+        bottom: calc(82px + env(safe-area-inset-bottom));
+        left: 10px;
+        z-index: 8;
+        display: flex;
+        flex-direction: column;
+        width: auto;
+        min-width: 0;
+        max-height: min(72dvh, 620px);
+        margin: 0;
+        padding: 20px 14px 14px;
+        overflow: auto;
+        border-radius: 18px 18px 8px 8px;
+        transform: translateY(calc(100% + 112px));
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: transform 0.26s ease, opacity 0.22s ease, visibility 0.22s ease;
+    }
+
+    #overview-panel::before,
+    #mission-control-panel::before,
+    #launch-feed-panel::before,
+    #satellite-focus-panel::before,
+    #controls-panel::before {
+        content: "";
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        width: 44px;
+        height: 4px;
+        border-radius: 999px;
+        background: rgba(237, 244, 255, 0.42);
+        transform: translateX(-50%);
+    }
+
+    #overview-panel.mobile-sheet-active,
+    #mission-control-panel.mobile-sheet-active,
+    #launch-feed-panel.mobile-sheet-active,
+    #satellite-focus-panel.mobile-sheet-active,
+    #controls-panel.mobile-sheet-active {
+        transform: translateY(0);
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+    }
+
+    body.launch-detail-active:not(.hide-watch) #overview-panel,
+    body.hide-news #launch-feed-panel,
+    body.hide-watch #overview-panel,
+    body.hide-watch #mission-control-panel,
+    body.hide-controls #controls-panel {
+        display: flex;
+    }
+
+    body.satellite-following .panel-restore-right,
+    .panel-restore-tab {
+        display: none !important;
+    }
+
+    #mission-control-panel,
+    #satellite-focus-panel {
+        display: flex;
+    }
+
+    #launch-feed-panel {
+        min-height: min(56dvh, 460px);
+    }
+
+    #launch-feed-items {
+        flex: 1;
+        min-height: 0;
+        padding-bottom: 2px;
+    }
+
+    #controls-panel {
+        padding-top: 42px;
+    }
+
+    .panel-arrow-controls {
+        top: 12px;
+        right: 12px;
+    }
+
+    .controls-grid-inline {
+        align-items: stretch;
+        flex-wrap: wrap;
+        overflow: visible;
+    }
+
+    .controls-inline-chunk,
+    .zoom-row,
+    .time-row {
+        width: 100%;
+        min-width: 0;
+        flex: 1 1 100%;
+    }
+
+    .controls-row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+    }
+
+    .controls-row .action-btn,
+    .time-row .action-btn,
+    .warp-cluster .action-btn {
+        min-width: 0;
+        text-align: center;
+        white-space: normal;
+    }
+
+    .time-row {
+        align-items: stretch;
+    }
+
+    .warp-cluster {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    #zoom-readout,
+    #warp-display {
+        flex: 0 0 auto;
+    }
+
+    .hero-launch-meta,
+    .sat-focus-grid,
+    .mission-cards {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .mobile-sheet-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 6;
+        display: block;
+        background: rgba(0, 4, 12, 0.28);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.22s ease;
+    }
+
+    body.mobile-sheet-open .mobile-sheet-scrim {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    #mobile-dock {
+        position: fixed;
+        right: 10px;
+        bottom: max(10px, env(safe-area-inset-bottom));
+        left: 10px;
+        z-index: 12;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        padding: 8px;
+        border: 1px solid rgba(95, 216, 255, 0.18);
+        border-radius: 18px;
+        background: rgba(4, 9, 19, 0.78);
+        box-shadow: 0 16px 42px rgba(0, 0, 0, 0.34);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        transition: transform 0.22s ease, opacity 0.22s ease;
+    }
+
+    body.mobile-has-context-sheet #mobile-dock {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    body.mobile-has-dual-context #mobile-dock {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .search-open #mobile-dock,
+    .settings-open #mobile-dock {
+        transform: translateY(calc(100% + 24px));
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .mobile-dock-btn {
+        min-width: 0;
+        min-height: 54px;
+        padding: 7px 4px 6px;
+        border: 1px solid rgba(95, 216, 255, 0.16);
+        border-radius: 12px;
+        background: rgba(11, 23, 43, 0.94);
+        color: var(--muted);
+        font: inherit;
+        font-size: 11px;
+        font-weight: 800;
+        cursor: pointer;
+    }
+
+    .mobile-dock-btn[aria-pressed="true"] {
+        border-color: rgba(95, 216, 255, 0.62);
+        background: rgba(16, 70, 122, 0.96);
+        color: #ffffff;
+    }
+
+    .mobile-dock-icon {
+        display: block;
+        margin-bottom: 3px;
+        font-size: 18px;
+        line-height: 1;
+    }
+
+    .mobile-context-btn[hidden] {
+        display: none;
+    }
+
+    #settings-drawer,
+    #search-drawer {
+        position: fixed;
+        top: auto;
+        right: 10px;
+        bottom: calc(10px + env(safe-area-inset-bottom));
+        left: 10px;
+        width: auto;
+        max-height: min(86dvh, 720px);
+        margin: 0;
+        border-radius: 18px 18px 8px 8px;
+        transform: translateY(calc(100% + 32px));
+    }
+
+    .settings-open #settings-drawer,
+    .search-open #search-drawer {
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 420px) {
+    .brand-stack h1 {
+        max-width: 46vw;
+        font-size: 17px;
+    }
+
+    #overview-panel,
+    #mission-control-panel,
+    #launch-feed-panel,
+    #satellite-focus-panel,
+    #controls-panel {
+        right: 8px;
+        left: 8px;
+        max-height: 74dvh;
+        padding-right: 12px;
+        padding-left: 12px;
+    }
+
+    .hero-launch-meta,
+    .sat-focus-grid,
+    .mission-cards,
+    .stats-grid,
+    .watch-story-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .controls-row {
+        grid-template-columns: 1fr;
+    }
+
+    .zoom-row,
+    .time-row {
+        flex-wrap: wrap;
+    }
+
+    .zoom-row input {
+        min-width: 0;
     }
 }

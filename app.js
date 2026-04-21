@@ -71,6 +71,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     const SATELLITE_ORBIT_DEFAULT_REVOLUTIONS = 2;
     const SATELLITE_ORBIT_MIN_REVOLUTIONS = 1;
     const SATELLITE_ORBIT_MAX_REVOLUTIONS = 5;
+    const SATELLITE_ORBIT_PERIOD_MIN_MINUTES = 80;
+    const SATELLITE_ORBIT_PERIOD_MAX_MINUTES = 8 * SIDEREAL_DAY_MINUTES;
     const SATELLITE_ORBIT_REFRESH_MS = 30 * 1000;
     const SCENE_CLICK_DRAG_TOLERANCE_PX = 7;
 
@@ -214,6 +216,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         satelliteHighlight: null,
         satelliteFocusedModelKey: '',
         satelliteOrbitLine: null,
+        satelliteGroundTrackLine: null,
         satelliteOrbitLastKey: '',
         satelliteCatalog: [],
         satelliteIndex: new Map(),
@@ -276,6 +279,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         launchSuccessStatsFetchedAt: 0,
         launchDataGeneratedAt: '',
         launchDataSource: '',
+        mobileActivePanel: null,
         fullTrajectory: [],
         totalMissionHours: 240,
         artemisReplayEnabled: false,
@@ -527,6 +531,13 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             'settings-toggle',
             'settings-close',
             'settings-scrim',
+            'mobile-dock',
+            'mobile-sheet-scrim',
+            'mobile-nav-info',
+            'mobile-nav-feed',
+            'mobile-nav-controls',
+            'mobile-nav-launch',
+            'mobile-nav-satellite',
             'satellite-orbit-revolutions',
             'satellite-orbit-revolutions-readout',
             'launch-stat-total',
@@ -614,6 +625,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         if (dom['overview-panel']) {
             dom['overview-panel'].setAttribute('aria-hidden', String(active || !watchVisible));
         }
+        applyMobilePanelState();
     }
 
     function applyPanelVisibility() {
@@ -627,6 +639,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             if (!button) return;
             button.setAttribute('aria-pressed', String(Boolean(state.panelVisibility[key])));
         });
+        applyMobilePanelState();
     }
 
     function closeLaunchDetailPanel() {
@@ -685,6 +698,104 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         if (dom['search-drawer']) dom['search-drawer'].setAttribute('aria-hidden', 'true');
     }
 
+    function hasMobileLaunchContext() {
+        return Boolean(state.launchDetailActive);
+    }
+
+    function hasMobileSatelliteContext() {
+        return Boolean(state.followSatelliteId && state.satelliteIndex.has(state.followSatelliteId));
+    }
+
+    function hasMobilePanelContext(panelKey) {
+        if (panelKey === 'launch') return hasMobileLaunchContext();
+        if (panelKey === 'satellite') return hasMobileSatelliteContext();
+        return ['info', 'feed', 'controls'].includes(panelKey);
+    }
+
+    function mobilePanelTargets(panelKey) {
+        if (panelKey === 'info') return ['overview-panel'];
+        if (panelKey === 'feed') return ['launch-feed-panel'];
+        if (panelKey === 'controls') return ['controls-panel'];
+        if (panelKey === 'launch' && hasMobileLaunchContext()) return ['mission-control-panel'];
+        if (panelKey === 'satellite' && hasMobileSatelliteContext()) return ['satellite-focus-panel'];
+        return [];
+    }
+
+    function closeMobileSheet() {
+        if (!state.mobileActivePanel) return;
+        state.mobileActivePanel = null;
+        applyMobilePanelState();
+    }
+
+    function openMobilePanel(panelKey) {
+        if (!isMobileViewport()) return;
+        if (!hasMobilePanelContext(panelKey)) return;
+        state.mobileActivePanel = panelKey;
+        applyMobilePanelState();
+    }
+
+    function toggleMobilePanel(panelKey) {
+        if (state.mobileActivePanel === panelKey) {
+            closeMobileSheet();
+        } else {
+            openMobilePanel(panelKey);
+        }
+    }
+
+    function applyMobilePanelState() {
+        const mobile = isMobileViewport();
+        const hasLaunchContext = hasMobileLaunchContext();
+        const hasSatelliteContext = hasMobileSatelliteContext();
+        const contextCount = Number(hasLaunchContext) + Number(hasSatelliteContext);
+        if (!mobile || !hasMobilePanelContext(state.mobileActivePanel)) {
+            state.mobileActivePanel = null;
+        }
+
+        document.body.classList.toggle('mobile-ui', mobile);
+        document.body.classList.toggle('mobile-has-context-sheet', mobile && contextCount > 0);
+        document.body.classList.toggle('mobile-has-dual-context', mobile && contextCount > 1);
+        document.body.classList.toggle('mobile-focus-launch', mobile && hasLaunchContext);
+        document.body.classList.toggle('mobile-focus-satellite', mobile && hasSatelliteContext);
+        document.body.classList.toggle('mobile-sheet-open', mobile && Boolean(state.mobileActivePanel));
+
+        const activeTargetIds = mobile && state.mobileActivePanel
+            ? mobilePanelTargets(state.mobileActivePanel)
+            : [];
+
+        [
+            'overview-panel',
+            'launch-feed-panel',
+            'controls-panel',
+            'mission-control-panel',
+            'satellite-focus-panel'
+        ].forEach((id) => {
+            dom[id]?.classList.remove('mobile-sheet-active');
+            if (mobile) dom[id]?.setAttribute('aria-hidden', String(!activeTargetIds.includes(id)));
+        });
+
+        if (mobile && state.mobileActivePanel) {
+            activeTargetIds.forEach((id) => {
+                dom[id]?.classList.add('mobile-sheet-active');
+            });
+        }
+
+        ['info', 'feed', 'controls', 'launch', 'satellite'].forEach((key) => {
+            const button = dom[`mobile-nav-${key}`];
+            if (!button) return;
+            const active = mobile && state.mobileActivePanel === key;
+            button.setAttribute('aria-pressed', String(active));
+        });
+
+        if (dom['mobile-nav-launch']) {
+            dom['mobile-nav-launch'].hidden = !(mobile && hasLaunchContext);
+            dom['mobile-nav-launch'].setAttribute('aria-hidden', String(!(mobile && hasLaunchContext)));
+        }
+        if (dom['mobile-nav-satellite']) {
+            dom['mobile-nav-satellite'].hidden = !(mobile && hasSatelliteContext);
+            dom['mobile-nav-satellite'].setAttribute('aria-hidden', String(!(mobile && hasSatelliteContext)));
+        }
+    }
+
     function bindUi() {
         dom['search-toggle']?.addEventListener('click', openSearch);
         dom['search-close']?.addEventListener('click', closeSearch);
@@ -692,11 +803,23 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         dom['settings-toggle']?.addEventListener('click', openSettings);
         dom['settings-close']?.addEventListener('click', closeSettings);
         dom['settings-scrim']?.addEventListener('click', closeSettings);
+        dom['mobile-sheet-scrim']?.addEventListener('click', closeMobileSheet);
+
+        document.querySelectorAll('[data-mobile-panel]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const key = button.getAttribute('data-mobile-panel');
+                if (key) toggleMobilePanel(key);
+            });
+        });
 
         document.querySelectorAll('[data-ui-toggle]').forEach((button) => {
             button.addEventListener('click', () => {
                 const key = button.getAttribute('data-ui-toggle');
                 if (!key) return;
+                if (isMobileViewport() && button.closest('#overview-panel, #launch-feed-panel, #controls-panel')) {
+                    closeMobileSheet();
+                    return;
+                }
                 state.panelVisibility[key] = !state.panelVisibility[key];
                 applyPanelVisibility();
                 writeUiState();
@@ -1256,6 +1379,21 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         state.satelliteOrbitLine.frustumCulled = false;
         state.satelliteOrbitLine.visible = false;
         state.earthGroup.add(state.satelliteOrbitLine);
+
+        state.satelliteGroundTrackLine = new THREE.Line(
+            new THREE.BufferGeometry(),
+            new THREE.LineDashedMaterial({
+                color: 0x53ffe8,
+                dashSize: 0.34,
+                gapSize: 0.18,
+                transparent: true,
+                opacity: 0.68,
+                depthWrite: false
+            })
+        );
+        state.satelliteGroundTrackLine.frustumCulled = false;
+        state.satelliteGroundTrackLine.visible = false;
+        state.earthMesh.add(state.satelliteGroundTrackLine);
     }
 
     function createSatelliteHighlightMarker() {
@@ -2480,7 +2618,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         state.launchDetailActive = true;
         applyLaunchDetailPanelState();
         refreshSelectedLaunchUi();
-        if (focus) focusSelectedLaunch();
+        const keepSatelliteContext = isMobileViewport() && Boolean(state.followSatelliteId);
+        if (focus && !keepSatelliteContext) focusSelectedLaunch();
+        if (isMobileViewport()) openMobilePanel('launch');
     }
 
     async function fetchLaunchSuccessStats(force = false) {
@@ -3427,6 +3567,7 @@ LIMIT 1`;
         if (dom['satellite-focus-panel']) {
             dom['satellite-focus-panel'].setAttribute('aria-hidden', String(!isFollowingSatellite));
         }
+        applyMobilePanelState();
 
         if (isFollowingSatellite && state.panelVisibility.news) {
             state.satelliteAutoHidNews = true;
@@ -3531,8 +3672,12 @@ LIMIT 1`;
     }
 
     function clearSatelliteOrbitPath() {
-        if (!state.satelliteOrbitLine) return;
-        state.satelliteOrbitLine.visible = false;
+        if (state.satelliteOrbitLine) {
+            state.satelliteOrbitLine.visible = false;
+        }
+        if (state.satelliteGroundTrackLine) {
+            state.satelliteGroundTrackLine.visible = false;
+        }
         state.satelliteOrbitLastKey = '';
     }
 
@@ -3602,7 +3747,7 @@ LIMIT 1`;
     }
 
     function updateSatelliteOrbitPath(force = false) {
-        if (!state.satelliteOrbitLine) return;
+        if (!state.satelliteOrbitLine || !state.satelliteGroundTrackLine) return;
         const satellite = state.followSatelliteId
             ? state.satelliteIndex.get(state.followSatelliteId)
             : null;
@@ -3615,8 +3760,8 @@ LIMIT 1`;
         const referenceMs = earthReferenceTimeMs();
         const periodMinutes = THREE.MathUtils.clamp(
             Number.isFinite(satellite.periodMinutes) ? satellite.periodMinutes : 96,
-            80,
-            4320
+            SATELLITE_ORBIT_PERIOD_MIN_MINUTES,
+            SATELLITE_ORBIT_PERIOD_MAX_MINUTES
         );
         const key = [
             satellite.id,
@@ -3629,25 +3774,37 @@ LIMIT 1`;
             return;
         }
 
-        const points = [];
-        const orbitRevolutions = clampSatelliteOrbitRevolutions(state.panelVisibility.orbitRevolutions);
-        const totalSampleCount = SATELLITE_ORBIT_SAMPLE_COUNT * orbitRevolutions;
+        const orbitPoints = [];
+        const groundTrackPoints = [];
+        const groundTrackRevolutions = clampSatelliteOrbitRevolutions(state.panelVisibility.orbitRevolutions);
+        const groundTrackSampleCount = SATELLITE_ORBIT_SAMPLE_COUNT * groundTrackRevolutions;
         const stepMs = (periodMinutes * 60000) / SATELLITE_ORBIT_SAMPLE_COUNT;
-        for (let i = 0; i <= totalSampleCount; i += 1) {
+        const groundTrackRadius = ARTEMIS.EARTH_RADIUS * 1.018;
+        for (let i = 0; i <= groundTrackSampleCount; i += 1) {
             const sampleMs = referenceMs + i * stepMs;
             const sample = satellitePositionAt(satellite, sampleMs, satelliteLib);
-            if (sample?.inertialPosition) points.push(sample.inertialPosition);
+            if (i <= SATELLITE_ORBIT_SAMPLE_COUNT && sample?.inertialPosition) {
+                orbitPoints.push(sample.inertialPosition);
+            }
+            if (sample?.localPosition) {
+                groundTrackPoints.push(sample.localPosition.clone().normalize().multiplyScalar(groundTrackRadius));
+            }
         }
 
-        if (points.length < 2) {
+        if (orbitPoints.length < 2 || groundTrackPoints.length < 2) {
             clearSatelliteOrbitPath();
             return;
         }
 
         state.satelliteOrbitLine.geometry.dispose();
-        state.satelliteOrbitLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
+        state.satelliteOrbitLine.geometry = new THREE.BufferGeometry().setFromPoints(orbitPoints);
         state.satelliteOrbitLine.computeLineDistances();
         state.satelliteOrbitLine.visible = true;
+
+        state.satelliteGroundTrackLine.geometry.dispose();
+        state.satelliteGroundTrackLine.geometry = new THREE.BufferGeometry().setFromPoints(groundTrackPoints);
+        state.satelliteGroundTrackLine.computeLineDistances();
+        state.satelliteGroundTrackLine.visible = true;
         state.satelliteOrbitLastKey = key;
     }
 
@@ -3930,6 +4087,7 @@ LIMIT 1`;
             state.followSatelliteId = satelliteId;
             frameFollowedSatellite(world, satellite);
             ensureSatelliteProfile(satellite);
+            if (isMobileViewport()) openMobilePanel('satellite');
         }
         refreshSatelliteFocusVisuals();
         renderSatelliteSearchResults();
@@ -4467,6 +4625,7 @@ LIMIT 1`;
         state.camera.updateProjectionMatrix();
         state.renderer.setSize(window.innerWidth, window.innerHeight);
         if (isMobileViewport()) closeSettings();
+        applyMobilePanelState();
     }
 
     function onKeyDown(event) {
@@ -4475,6 +4634,10 @@ LIMIT 1`;
             state.flyKeys[event.key] = true;
         }
         if (event.key === 'Escape') {
+            if (state.mobileActivePanel) {
+                closeMobileSheet();
+                return;
+            }
             if (document.body.classList.contains('search-open')) {
                 closeSearch();
                 return;

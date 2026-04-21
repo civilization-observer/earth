@@ -261,6 +261,30 @@
     <button type="button" class="panel-restore-tab panel-restore-right" id="panel-restore-news" data-ui-toggle="news" aria-label="Launch Feed einblenden">Feed</button>
     <button type="button" class="panel-restore-tab panel-restore-bottom" id="panel-restore-controls" data-ui-toggle="controls" aria-label="Steuerung einblenden">Steuerung</button>
 
+    <div class="mobile-sheet-scrim" id="mobile-sheet-scrim"></div>
+    <nav id="mobile-dock" aria-label="Mobile Navigation">
+        <button type="button" class="mobile-dock-btn" id="mobile-nav-info" data-mobile-panel="info" aria-pressed="false">
+            <span class="mobile-dock-icon" aria-hidden="true">&#9432;</span>
+            <span>Info</span>
+        </button>
+        <button type="button" class="mobile-dock-btn" id="mobile-nav-feed" data-mobile-panel="feed" aria-pressed="false">
+            <span class="mobile-dock-icon" aria-hidden="true">&#9776;</span>
+            <span>Feed</span>
+        </button>
+        <button type="button" class="mobile-dock-btn" id="mobile-nav-controls" data-mobile-panel="controls" aria-pressed="false">
+            <span class="mobile-dock-icon" aria-hidden="true">&#9673;</span>
+            <span>Steuerung</span>
+        </button>
+        <button type="button" class="mobile-dock-btn mobile-context-btn" id="mobile-nav-launch" data-mobile-panel="launch" aria-pressed="false" aria-hidden="true">
+            <span class="mobile-dock-icon" aria-hidden="true">&#9679;</span>
+            <span>Start</span>
+        </button>
+        <button type="button" class="mobile-dock-btn mobile-context-btn" id="mobile-nav-satellite" data-mobile-panel="satellite" aria-pressed="false" aria-hidden="true">
+            <span class="mobile-dock-icon" aria-hidden="true">&#9679;</span>
+            <span>Satellit</span>
+        </button>
+    </nav>
+
     <div class="drawer-scrim" id="search-scrim"></div>
     <div class="drawer-scrim" id="settings-scrim"></div>
 
