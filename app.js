@@ -280,6 +280,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         launchDataGeneratedAt: '',
         launchDataSource: '',
         mobileActivePanel: null,
+        mobileSheetDrag: null,
+        mobileSheetHeights: {},
         fullTrajectory: [],
         totalMissionHours: 240,
         artemisReplayEnabled: false,
@@ -593,9 +595,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
             'zoom-slider',
             'zoom-readout',
             'settings-drawer',
-            'toggle-news',
-            'toggle-watch',
-            'toggle-controls',
+            'toggle-artemis-settings',
+            'artemis-settings-panel',
             'toggle-artemis-replay',
             'met-clock',
             'mission-phase',
@@ -698,6 +699,14 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         if (dom['search-drawer']) dom['search-drawer'].setAttribute('aria-hidden', 'true');
     }
 
+    function setArtemisSettingsOpen(open) {
+        dom['artemis-settings-panel']?.classList.toggle('is-collapsed', !open);
+        dom['toggle-artemis-settings']?.setAttribute('aria-expanded', String(open));
+        if (dom['toggle-artemis-settings']) {
+            dom['toggle-artemis-settings'].textContent = open ? 'Artemis schliessen' : 'Artemis oeffnen';
+        }
+    }
+
     function hasMobileLaunchContext() {
         return Boolean(state.launchDetailActive);
     }
@@ -719,6 +728,89 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         if (panelKey === 'launch' && hasMobileLaunchContext()) return ['mission-control-panel'];
         if (panelKey === 'satellite' && hasMobileSatelliteContext()) return ['satellite-focus-panel'];
         return [];
+    }
+
+    function mobilePanelKeyForSheetId(id) {
+        return {
+            'overview-panel': 'info',
+            'launch-feed-panel': 'feed',
+            'controls-panel': 'controls',
+            'mission-control-panel': 'launch',
+            'satellite-focus-panel': 'satellite'
+        }[id] || '';
+    }
+
+    function mobileSheetLimits() {
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 640;
+        const dockHeight = dom['mobile-dock']?.getBoundingClientRect().height || 78;
+        const topClearance = 78;
+        const max = Math.max(240, viewportHeight - dockHeight - topClearance - 24);
+        const min = Math.min(max, 34);
+        const defaultHeight = THREE.MathUtils.clamp(Math.round(viewportHeight * 0.54), min, max);
+        return { min, max, defaultHeight };
+    }
+
+    function ensureMobileSheetHeight(panelKey) {
+        if (!state.mobileSheetHeights[panelKey]) {
+            state.mobileSheetHeights[panelKey] = mobileSheetLimits().defaultHeight;
+        }
+        return state.mobileSheetHeights[panelKey];
+    }
+
+    function applyMobileSheetHeight(sheetId) {
+        const panelKey = mobilePanelKeyForSheetId(sheetId);
+        if (!panelKey || !dom[sheetId]) return;
+        const height = ensureMobileSheetHeight(panelKey);
+        dom[sheetId].style.setProperty('--mobile-sheet-height', `${height}px`);
+    }
+
+    function isMobileSheetDragTarget(event, panel) {
+        if (!isMobileViewport()) return false;
+        if (event.button !== undefined && event.button !== 0) return false;
+        if (event.target.closest('button, a, input, select, textarea, iframe')) return false;
+        const rect = panel.getBoundingClientRect();
+        if (event.clientY - rect.top <= 64) return true;
+        return Boolean(event.target.closest('.panel-head'));
+    }
+
+    function onMobileSheetPointerDown(event) {
+        const panel = event.currentTarget;
+        if (!isMobileSheetDragTarget(event, panel)) return;
+        const panelKey = mobilePanelKeyForSheetId(panel.id);
+        if (!panelKey || state.mobileActivePanel !== panelKey) return;
+        const rect = panel.getBoundingClientRect();
+        state.mobileSheetDrag = {
+            panel,
+            panelKey,
+            pointerId: event.pointerId,
+            startY: event.clientY,
+            startHeight: rect.height,
+            limits: mobileSheetLimits()
+        };
+        panel.classList.add('mobile-sheet-dragging');
+        panel.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+    }
+
+    function onMobileSheetPointerMove(event) {
+        const drag = state.mobileSheetDrag;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        const nextHeight = THREE.MathUtils.clamp(
+            drag.startHeight + drag.startY - event.clientY,
+            drag.limits.min,
+            drag.limits.max
+        );
+        state.mobileSheetHeights[drag.panelKey] = nextHeight;
+        drag.panel.style.setProperty('--mobile-sheet-height', `${nextHeight}px`);
+        event.preventDefault();
+    }
+
+    function endMobileSheetDrag(event) {
+        const drag = state.mobileSheetDrag;
+        if (!drag || (event?.pointerId !== undefined && drag.pointerId !== event.pointerId)) return;
+        drag.panel.classList.remove('mobile-sheet-dragging');
+        drag.panel.releasePointerCapture?.(drag.pointerId);
+        state.mobileSheetDrag = null;
     }
 
     function closeMobileSheet() {
@@ -775,6 +867,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
         if (mobile && state.mobileActivePanel) {
             activeTargetIds.forEach((id) => {
+                applyMobileSheetHeight(id);
                 dom[id]?.classList.add('mobile-sheet-active');
             });
         }
@@ -803,13 +896,25 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         dom['settings-toggle']?.addEventListener('click', openSettings);
         dom['settings-close']?.addEventListener('click', closeSettings);
         dom['settings-scrim']?.addEventListener('click', closeSettings);
-        dom['mobile-sheet-scrim']?.addEventListener('click', closeMobileSheet);
 
         document.querySelectorAll('[data-mobile-panel]').forEach((button) => {
             button.addEventListener('click', () => {
                 const key = button.getAttribute('data-mobile-panel');
                 if (key) toggleMobilePanel(key);
             });
+        });
+
+        [
+            'overview-panel',
+            'launch-feed-panel',
+            'controls-panel',
+            'mission-control-panel',
+            'satellite-focus-panel'
+        ].forEach((id) => {
+            dom[id]?.addEventListener('pointerdown', onMobileSheetPointerDown);
+            dom[id]?.addEventListener('pointermove', onMobileSheetPointerMove);
+            dom[id]?.addEventListener('pointerup', endMobileSheetDrag);
+            dom[id]?.addEventListener('pointercancel', endMobileSheetDrag);
         });
 
         document.querySelectorAll('[data-ui-toggle]').forEach((button) => {
@@ -840,6 +945,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         dom['warp-backward-btn']?.addEventListener('click', cycleWarpBackward);
         dom['warp-reset-btn']?.addEventListener('click', warpToOne);
         dom['warp-forward-btn']?.addEventListener('click', cycleWarpForward);
+        dom['toggle-artemis-settings']?.addEventListener('click', () => {
+            const open = dom['toggle-artemis-settings']?.getAttribute('aria-expanded') === 'true';
+            setArtemisSettingsOpen(!open);
+        });
         dom['toggle-artemis-replay']?.addEventListener('click', () => {
             setArtemisReplayEnabled(!state.artemisReplayEnabled);
         });
@@ -4625,6 +4734,10 @@ LIMIT 1`;
         state.camera.updateProjectionMatrix();
         state.renderer.setSize(window.innerWidth, window.innerHeight);
         if (isMobileViewport()) closeSettings();
+        const limits = mobileSheetLimits();
+        Object.keys(state.mobileSheetHeights).forEach((key) => {
+            state.mobileSheetHeights[key] = THREE.MathUtils.clamp(state.mobileSheetHeights[key], limits.min, limits.max);
+        });
         applyMobilePanelState();
     }
 

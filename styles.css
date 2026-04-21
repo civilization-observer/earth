@@ -740,6 +740,7 @@ body.satellite-following .panel-restore-right {
 
 #overview-panel,
 #mission-control-panel,
+#satellite-focus-panel,
 #launch-feed-items,
 .mission-timeline,
 #satellite-search-results,
@@ -751,6 +752,7 @@ body.satellite-following .panel-restore-right {
 
 #overview-panel::-webkit-scrollbar,
 #mission-control-panel::-webkit-scrollbar,
+#satellite-focus-panel::-webkit-scrollbar,
 #launch-feed-items::-webkit-scrollbar,
 .mission-timeline::-webkit-scrollbar,
 #satellite-search-results::-webkit-scrollbar,
@@ -761,6 +763,7 @@ body.satellite-following .panel-restore-right {
 
 #overview-panel::-webkit-scrollbar-track,
 #mission-control-panel::-webkit-scrollbar-track,
+#satellite-focus-panel::-webkit-scrollbar-track,
 #launch-feed-items::-webkit-scrollbar-track,
 .mission-timeline::-webkit-scrollbar-track,
 #satellite-search-results::-webkit-scrollbar-track,
@@ -771,6 +774,7 @@ body.satellite-following .panel-restore-right {
 
 #overview-panel::-webkit-scrollbar-thumb,
 #mission-control-panel::-webkit-scrollbar-thumb,
+#satellite-focus-panel::-webkit-scrollbar-thumb,
 #launch-feed-items::-webkit-scrollbar-thumb,
 .mission-timeline::-webkit-scrollbar-thumb,
 #satellite-search-results::-webkit-scrollbar-thumb,
@@ -1108,6 +1112,18 @@ body.satellite-following .panel-restore-right {
     font-size: 11px;
 }
 
+.artemis-settings-panel {
+    margin-top: 14px;
+}
+
+.artemis-settings-panel.is-collapsed {
+    display: none;
+}
+
+.artemis-replay-toggle-row {
+    margin-top: 0;
+}
+
 #mobile-dock,
 .mobile-sheet-scrim {
     display: none;
@@ -1305,16 +1321,57 @@ body.hide-controls .panel-restore-bottom {
         flex-direction: column;
         width: auto;
         min-width: 0;
-        max-height: min(72dvh, 620px);
+        height: var(--mobile-sheet-height, min(54dvh, 520px));
+        max-height: calc(100dvh - 118px - env(safe-area-inset-bottom));
         margin: 0;
-        padding: 20px 14px 14px;
+        padding: 20px 17px 14px 14px;
+        min-height: 0;
         overflow: auto;
+        scrollbar-gutter: stable;
         border-radius: 18px 18px 8px 8px;
         transform: translateY(calc(100% + 112px));
         opacity: 0;
         visibility: hidden;
         pointer-events: none;
         transition: transform 0.26s ease, opacity 0.22s ease, visibility 0.22s ease;
+        touch-action: pan-y;
+        overscroll-behavior: contain;
+    }
+
+    #overview-panel,
+    #mission-control-panel,
+    #launch-feed-panel,
+    #satellite-focus-panel,
+    #controls-panel {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(95, 216, 255, 0.38) rgba(95, 216, 255, 0.06);
+    }
+
+    #overview-panel::-webkit-scrollbar,
+    #mission-control-panel::-webkit-scrollbar,
+    #launch-feed-panel::-webkit-scrollbar,
+    #satellite-focus-panel::-webkit-scrollbar,
+    #controls-panel::-webkit-scrollbar {
+        width: 5px;
+    }
+
+    #overview-panel::-webkit-scrollbar-track,
+    #mission-control-panel::-webkit-scrollbar-track,
+    #launch-feed-panel::-webkit-scrollbar-track,
+    #satellite-focus-panel::-webkit-scrollbar-track,
+    #controls-panel::-webkit-scrollbar-track {
+        margin: 20px 0 10px;
+        border-radius: 999px;
+        background: rgba(95, 216, 255, 0.06);
+    }
+
+    #overview-panel::-webkit-scrollbar-thumb,
+    #mission-control-panel::-webkit-scrollbar-thumb,
+    #launch-feed-panel::-webkit-scrollbar-thumb,
+    #satellite-focus-panel::-webkit-scrollbar-thumb,
+    #controls-panel::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: linear-gradient(180deg, rgba(95, 216, 255, 0.5), rgba(183, 193, 255, 0.22));
     }
 
     #overview-panel::before,
@@ -1344,6 +1401,30 @@ body.hide-controls .panel-restore-bottom {
         pointer-events: auto;
     }
 
+    #overview-panel.mobile-sheet-active:not(.mobile-sheet-dragging),
+    #mission-control-panel.mobile-sheet-active:not(.mobile-sheet-dragging),
+    #launch-feed-panel.mobile-sheet-active:not(.mobile-sheet-dragging),
+    #satellite-focus-panel.mobile-sheet-active:not(.mobile-sheet-dragging),
+    #controls-panel.mobile-sheet-active:not(.mobile-sheet-dragging) {
+        transition: height 0.12s ease, transform 0.26s ease, opacity 0.22s ease, visibility 0.22s ease;
+    }
+
+    #overview-panel.mobile-sheet-dragging,
+    #mission-control-panel.mobile-sheet-dragging,
+    #launch-feed-panel.mobile-sheet-dragging,
+    #satellite-focus-panel.mobile-sheet-dragging,
+    #controls-panel.mobile-sheet-dragging {
+        transition: none;
+        user-select: none;
+    }
+
+    #overview-panel .panel-head,
+    #mission-control-panel .panel-head,
+    #launch-feed-panel .panel-head,
+    #satellite-focus-panel .panel-head {
+        cursor: ns-resize;
+    }
+
     body.launch-detail-active:not(.hide-watch) #overview-panel,
     body.hide-news #launch-feed-panel,
     body.hide-watch #overview-panel,
@@ -1363,7 +1444,7 @@ body.hide-controls .panel-restore-bottom {
     }
 
     #launch-feed-panel {
-        min-height: min(56dvh, 460px);
+        min-height: 0;
     }
 
     #launch-feed-items {
@@ -1444,7 +1525,7 @@ body.hide-controls .panel-restore-bottom {
 
     body.mobile-sheet-open .mobile-sheet-scrim {
         opacity: 1;
-        pointer-events: auto;
+        pointer-events: none;
     }
 
     #mobile-dock {
@@ -1545,17 +1626,19 @@ body.hide-controls .panel-restore-bottom {
     #controls-panel {
         right: 8px;
         left: 8px;
-        max-height: 74dvh;
-        padding-right: 12px;
+        padding-right: 15px;
         padding-left: 12px;
     }
 
     .hero-launch-meta,
     .sat-focus-grid,
     .mission-cards,
-    .stats-grid,
     .watch-story-grid {
         grid-template-columns: 1fr;
+    }
+
+    #overview-panel .stats-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .controls-row {

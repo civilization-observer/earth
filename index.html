@@ -312,18 +312,6 @@
         </section>
 
         <section class="drawer-section">
-            <h3>Satelliten-Tracking</h3>
-            <p>Lege fest, wie weit die vorausberechnete Flugbahn fuer den verfolgten Satelliten angezeigt wird.</p>
-            <div class="orbit-setting-wrap">
-                <div class="mission-slider-head">
-                    <span class="small-label">Flugbahn-Laenge</span>
-                    <span id="satellite-orbit-revolutions-readout">2 Umlaeufe</span>
-                </div>
-                <input type="range" id="satellite-orbit-revolutions" min="1" max="5" value="2" step="1">
-            </div>
-        </section>
-
-        <section class="drawer-section">
             <div class="panel-head">
                 <div>
                     <h3>Ergebnisse</h3>
@@ -338,75 +326,83 @@
         <div class="drawer-head">
             <div>
                 <div class="section-kicker">Settings</div>
-                <h2>Artemis II Replay</h2>
-                <p>Die Mission bleibt aus der Home-Oberflaeche raus, laesst sich hier aber komplett durchscrollen und bei Bedarf im 3D-Raum einblenden.</p>
+                <h2>Einstellungen</h2>
+                <p>Tracking, Flugbahn und optionale Missionsansichten.</p>
             </div>
             <button type="button" class="icon-btn" id="settings-close" aria-label="Settings schliessen">&times;</button>
         </div>
 
         <section class="drawer-section">
-            <h3>Interface</h3>
-            <p>Steuere die Zusatzpanels, ohne die Startseite wieder mit Artemis-spezifischen Modulen zu ueberfrachten.</p>
-            <div class="toggle-row">
-                <button type="button" class="toggle-chip" id="toggle-news" data-ui-toggle="news" aria-pressed="true">Feed</button>
-                <button type="button" class="toggle-chip" id="toggle-watch" data-ui-toggle="watch" aria-pressed="true">Uebersicht</button>
-                <button type="button" class="toggle-chip" id="toggle-controls" data-ui-toggle="controls" aria-pressed="true">Steuerung</button>
+            <h3>Satelliten-Tracking</h3>
+            <p>Lege fest, wie weit die vorausberechnete Flugbahn fuer den verfolgten Satelliten angezeigt wird.</p>
+            <div class="orbit-setting-wrap">
+                <div class="mission-slider-head">
+                    <span class="small-label">Flugbahn-Laenge</span>
+                    <span id="satellite-orbit-revolutions-readout">2 Umlaeufe</span>
+                </div>
+                <input type="range" id="satellite-orbit-revolutions" min="1" max="5" value="2" step="1">
             </div>
         </section>
 
         <section class="drawer-section">
             <div class="panel-head">
                 <div>
-                    <h3>Replay-Deck</h3>
-                    <p>Nutze den Slider oder die Missionsmarken, um Artemis II als Replay anzusehen.</p>
+                    <h3>Artemis II</h3>
+                    <p>Replay-Deck und Missionsmarken nur bei Bedarf anzeigen.</p>
                 </div>
-                <button type="button" class="action-btn action-btn-accent" id="toggle-artemis-replay">Replay im Raum aus</button>
+                <button type="button" class="action-btn action-btn-accent" id="toggle-artemis-settings" aria-expanded="false">Artemis oeffnen</button>
             </div>
 
-            <div class="mission-cards">
-                <div class="mission-card">
-                    <div class="small-label">MET</div>
-                    <strong id="met-clock">T+ 0d 00:00:00</strong>
+            <div class="artemis-settings-panel is-collapsed" id="artemis-settings-panel">
+                <div class="drawer-action-row artemis-replay-toggle-row">
+                    <button type="button" class="action-btn action-btn-accent" id="toggle-artemis-replay">Replay im Raum aus</button>
                 </div>
-                <div class="mission-card">
-                    <div class="small-label">Phase</div>
-                    <strong id="mission-phase">Initialisierung</strong>
-                </div>
-                <div class="mission-card">
-                    <div class="small-label">Datum &amp; Uhrzeit</div>
-                    <strong id="mission-date">--</strong>
-                </div>
-                <div class="mission-card">
-                    <div class="small-label">Entfernung Erde</div>
-                    <strong class="metric" id="dist-earth">--</strong>
-                </div>
-                <div class="mission-card">
-                    <div class="small-label">Abstand Mond</div>
-                    <strong class="metric-moon" id="dist-moon">--</strong>
-                </div>
-                <div class="mission-card">
-                    <div class="small-label">Geschwindigkeit</div>
-                    <strong class="metric-amber" id="velocity">--</strong>
-                </div>
-            </div>
 
-            <div class="mission-slider-wrap">
-                <div class="mission-slider-head">
-                    <span class="small-label">Missionsposition</span>
-                    <span id="mission-met-readout">T+ 0d 00:00:00 MET</span>
+                <div class="mission-cards">
+                    <div class="mission-card">
+                        <div class="small-label">MET</div>
+                        <strong id="met-clock">T+ 0d 00:00:00</strong>
+                    </div>
+                    <div class="mission-card">
+                        <div class="small-label">Phase</div>
+                        <strong id="mission-phase">Initialisierung</strong>
+                    </div>
+                    <div class="mission-card">
+                        <div class="small-label">Datum &amp; Uhrzeit</div>
+                        <strong id="mission-date">--</strong>
+                    </div>
+                    <div class="mission-card">
+                        <div class="small-label">Entfernung Erde</div>
+                        <strong class="metric" id="dist-earth">--</strong>
+                    </div>
+                    <div class="mission-card">
+                        <div class="small-label">Abstand Mond</div>
+                        <strong class="metric-moon" id="dist-moon">--</strong>
+                    </div>
+                    <div class="mission-card">
+                        <div class="small-label">Geschwindigkeit</div>
+                        <strong class="metric-amber" id="velocity">--</strong>
+                    </div>
                 </div>
-                <input type="range" id="mission-met-slider" min="0" max="1000" value="0" step="0.1">
-                <div class="drawer-action-row" style="margin-top: 14px;">
-                    <button type="button" class="action-btn" id="jump-artemis-start">Zum Start</button>
-                    <button type="button" class="action-btn" id="jump-artemis-end">Zur Landung</button>
-                    <button type="button" class="action-btn" id="follow-artemis">Orion folgen</button>
-                </div>
-                <div class="progress-track">
-                    <div class="progress-fill" id="mission-progress-fill"></div>
-                </div>
-            </div>
 
-            <div class="mission-timeline" id="mission-timeline-items"></div>
+                <div class="mission-slider-wrap">
+                    <div class="mission-slider-head">
+                        <span class="small-label">Missionsposition</span>
+                        <span id="mission-met-readout">T+ 0d 00:00:00 MET</span>
+                    </div>
+                    <input type="range" id="mission-met-slider" min="0" max="1000" value="0" step="0.1">
+                    <div class="drawer-action-row" style="margin-top: 14px;">
+                        <button type="button" class="action-btn" id="jump-artemis-start">Zum Start</button>
+                        <button type="button" class="action-btn" id="jump-artemis-end">Zur Landung</button>
+                        <button type="button" class="action-btn" id="follow-artemis">Orion folgen</button>
+                    </div>
+                    <div class="progress-track">
+                        <div class="progress-fill" id="mission-progress-fill"></div>
+                    </div>
+                </div>
+
+                <div class="mission-timeline" id="mission-timeline-items"></div>
+            </div>
         </section>
     </aside>
 
