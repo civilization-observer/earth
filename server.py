@@ -70,7 +70,7 @@ def fetch_satellite_source() -> str:
     request = urllib.request.Request(
         SATELLITE_SOURCE_URL,
         headers={
-            "User-Agent": "CivilizationObserver/1.0 (+local cache proxy)",
+            "User-Agent": "Earth/1.0 (+local cache proxy)",
             "Accept": "text/plain",
         },
     )
@@ -113,7 +113,7 @@ def fetch_json(url: str, headers: dict[str, str] | None = None) -> object:
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "CivilizationObserver/1.0 (+local satellite metadata cache)",
+            "User-Agent": "Earth/1.0 (+local satellite metadata cache)",
             "Accept": "application/json",
             **(headers or {}),
         },
@@ -277,7 +277,7 @@ def get_satellite_payload() -> tuple[int, str, dict[str, str]]:
             }
 
 
-class CivilizationObserverHandler(SimpleHTTPRequestHandler):
+class EarthHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT_DIR), **kwargs)
 
@@ -319,13 +319,13 @@ class CivilizationObserverHandler(SimpleHTTPRequestHandler):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Civilization Observer local server")
+    parser = argparse.ArgumentParser(description="Earth local server")
     parser.add_argument("--port", type=int, default=8000, help="Port for the local web server")
     args = parser.parse_args()
 
     ensure_cache_dir()
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), CivilizationObserverHandler)
-    print(f"Civilization Observer running on http://localhost:{args.port}")
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), EarthHandler)
+    print(f"Earth running on http://localhost:{args.port}")
     print("Satelliten werden lokal ueber /api/satellites/active.tle mit Festplatten-Cache bedient.")
     try:
         server.serve_forever()

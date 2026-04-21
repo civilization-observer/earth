@@ -35,7 +35,7 @@ ISS_OEM_SOURCE_URL = "https://nasa-public-data.s3.amazonaws.com/iss-coords/curre
 
 USER_AGENT = os.environ.get(
     "LAUNCH_WORKER_USER_AGENT",
-    "artemisobserver-launch-worker/1.0 (+https://github.com/civilization-observer/artemis-observer)",
+    "earth-launch-worker/1.0",
 )
 
 FEED_REFRESH_INTERVAL = timedelta(hours=1)

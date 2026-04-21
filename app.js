@@ -9,8 +9,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         throw new Error('ARTEMIS2 data source is missing.');
     }
 
-    const UI_STORAGE_KEY = 'artemisobserver-ui-v2';
-    const SATELLITE_CACHE_KEY = 'artemisobserver-satellite-cache-v1';
+    const UI_STORAGE_KEY = 'earth-ui-v2';
+    const SATELLITE_CACHE_KEY = 'earth-satellite-cache-v1';
     const LAUNCH_FEED_DATA_URL = 'data/launch-feed.json';
     const LAUNCH_DB_DATA_URL = 'data/launch-db.json';
     const LAUNCH_STATS_DATA_URL = 'data/launch-stats.json';

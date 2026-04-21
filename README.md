@@ -1,4 +1,4 @@
-# Civilization Observer
+# Earth
 
 Statische GitHub-Pages-Seite fuer Earth Launch Watch, Artemis-II-Replay und Satellitenansicht.
 
