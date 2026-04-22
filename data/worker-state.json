@@ -1,18 +1,18 @@
 {
-  "lastFeedRefreshAt": "2026-04-22T09:23:04Z",
-  "lastCheckRunAt": "2026-04-22T09:23:04Z",
-  "lastSatelliteRefreshAt": "2026-04-22T05:51:33Z",
+  "lastFeedRefreshAt": "2026-04-22T10:48:00Z",
+  "lastCheckRunAt": "2026-04-22T10:48:00Z",
+  "lastSatelliteRefreshAt": "2026-04-22T10:48:00Z",
   "pendingChecks": [
     {
       "id": "20418dc6-1870-4018-adda-1e6156717f02",
       "phase": "preflight",
-      "dueAt": "2026-04-23T01:45:00Z",
+      "dueAt": "2026-04-23T02:08:10Z",
       "overdue": false
     },
     {
       "id": "20418dc6-1870-4018-adda-1e6156717f02",
       "phase": "postflight",
-      "dueAt": "2026-04-23T02:30:00Z",
+      "dueAt": "2026-04-23T02:53:10Z",
       "overdue": false
     },
     {
@@ -304,8 +304,6 @@
       "overdue": false
     }
   ],
-  "lastErrors": [
-    "satellite refresh failed: <urlopen error timed out>"
-  ],
+  "lastErrors": [],
   "lastIssOemRefreshAt": "2026-04-22T09:23:04Z"
 }
