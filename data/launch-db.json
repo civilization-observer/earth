@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-22T10:48:00Z",
+  "generatedAt": "2026-04-22T11:46:55Z",
   "source": "launch-worker:observed-db",
   "launches": [
     {
@@ -651,16 +651,16 @@
       "statusName": "Launch in Flight",
       "statusAbbrev": "In Flight",
       "statusDescription": "Launch in Flight",
-      "sourceUrl": "https://ll.thespacedevs.com/2.2.0/launch/4e074623-426a-4ab2-8729-a85200684bef/",
-      "apiUrl": "https://ll.thespacedevs.com/2.2.0/launch/4e074623-426a-4ab2-8729-a85200684bef/",
-      "updatedAt": "2026-04-22T10:48:00Z",
+      "sourceUrl": "https://ll.thespacedevs.com/2.2.0/launch/4e074623-426a-4ab2-8729-a85200684bef/?format=json",
+      "apiUrl": "https://ll.thespacedevs.com/2.2.0/launch/4e074623-426a-4ab2-8729-a85200684bef/?format=json",
+      "updatedAt": "2026-04-22T11:46:55Z",
       "firstSeenAt": "2026-04-19T13:07:28Z",
       "preflightCheckedAt": "2026-04-22T03:38:28Z",
       "preflightStatus": "missed",
       "previousNets": [
         "2026-04-22T00:00:00Z"
       ],
-      "postflightCheckedAt": "2026-04-22T10:48:00Z",
+      "postflightCheckedAt": "2026-04-22T11:46:55Z",
       "postflightStatus": "live"
     },
     {
