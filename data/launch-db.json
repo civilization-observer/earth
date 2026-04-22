@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-21T23:24:04Z",
+  "generatedAt": "2026-04-22T00:01:46Z",
   "source": "launch-worker:observed-db",
   "launches": [
     {
@@ -616,8 +616,10 @@
       "statusDescription": "Current T-0 confirmed by official or reliable sources.",
       "sourceUrl": "https://ll.thespacedevs.com/2.2.0/launch/4e074623-426a-4ab2-8729-a85200684bef/",
       "apiUrl": "https://ll.thespacedevs.com/2.2.0/launch/4e074623-426a-4ab2-8729-a85200684bef/",
-      "updatedAt": "2026-04-21T23:24:04Z",
-      "firstSeenAt": "2026-04-19T13:07:28Z"
+      "updatedAt": "2026-04-22T00:01:46Z",
+      "firstSeenAt": "2026-04-19T13:07:28Z",
+      "preflightCheckedAt": "2026-04-22T00:01:46Z",
+      "preflightStatus": "go"
     },
     {
       "id": "2c5686ec-b0fd-4987-935d-587e3c85fa2d",
