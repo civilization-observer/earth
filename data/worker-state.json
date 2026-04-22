@@ -1,6 +1,6 @@
 {
-  "lastFeedRefreshAt": "2026-04-22T07:51:10Z",
-  "lastCheckRunAt": "2026-04-22T07:51:10Z",
+  "lastFeedRefreshAt": "2026-04-22T09:23:04Z",
+  "lastCheckRunAt": "2026-04-22T09:23:04Z",
   "lastSatelliteRefreshAt": "2026-04-22T05:51:33Z",
   "pendingChecks": [
     {
@@ -304,6 +304,8 @@
       "overdue": false
     }
   ],
-  "lastErrors": [],
-  "lastIssOemRefreshAt": "2026-04-22T05:51:33Z"
+  "lastErrors": [
+    "satellite refresh failed: <urlopen error timed out>"
+  ],
+  "lastIssOemRefreshAt": "2026-04-22T09:23:04Z"
 }
