@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-26T13:11:26Z",
+  "generatedAt": "2026-04-26T14:11:03Z",
   "source": "launch-worker:observed-db",
   "launches": [
     {
@@ -498,6 +498,37 @@
       "firstSeenAt": "2026-04-19T13:07:28Z"
     },
     {
+      "id": "74b3aa8f-dc54-43dd-b8dd-1dc62ccccfc4",
+      "name": "Soyuz-5 | Demo Flight",
+      "net": "2026-04-30T00:00:00Z",
+      "provider": "RKK Energiya",
+      "rocket": "Soyuz-5",
+      "pad": "45/1",
+      "padLocation": "Baikonur Cosmodrome, Republic of Kazakhstan",
+      "latitude": 45.943492,
+      "longitude": 63.653014,
+      "mission": "Demo Flight",
+      "missionDescription": "Demonstration Flight for Russia's new Soyuz-5 launch vehicle, with a mass simulator on board. Details TBD.",
+      "orbit": "Suborbital",
+      "status": "delayed",
+      "outcome": "delayed",
+      "statusName": "To Be Determined",
+      "statusAbbrev": "TBD",
+      "statusDescription": "Current date is a placeholder or rough estimation based on unreliable or interpreted sources.",
+      "sourceUrl": "https://ll.thespacedevs.com/2.2.0/launch/74b3aa8f-dc54-43dd-b8dd-1dc62ccccfc4/",
+      "apiUrl": "https://ll.thespacedevs.com/2.2.0/launch/74b3aa8f-dc54-43dd-b8dd-1dc62ccccfc4/",
+      "updatedAt": "2026-04-26T14:11:03Z",
+      "firstSeenAt": "2026-04-19T13:07:28Z",
+      "previousNets": [
+        "2026-04-30T00:00:00Z",
+        "2026-04-26T11:00:00Z"
+      ],
+      "preflightCheckedAt": "2026-04-26T14:11:03Z",
+      "postflightCheckedAt": "2026-04-26T14:11:03Z",
+      "preflightStatus": "missed",
+      "postflightStatus": "delayed"
+    },
+    {
       "id": "7e89e423-6f47-40a0-b075-c6fc1d9cf228",
       "name": "Atlas V 551 | Amazon Leo (LA-06)",
       "net": "2026-04-28T00:52:00Z",
@@ -591,36 +622,6 @@
       "postflightCheckedAt": null,
       "preflightStatus": "",
       "postflightStatus": ""
-    },
-    {
-      "id": "74b3aa8f-dc54-43dd-b8dd-1dc62ccccfc4",
-      "name": "Soyuz-5 | Demo Flight",
-      "net": "2026-04-26T11:00:00Z",
-      "provider": "RKK Energiya",
-      "rocket": "Soyuz-5",
-      "pad": "45/1",
-      "padLocation": "Baikonur Cosmodrome, Republic of Kazakhstan",
-      "latitude": 45.943492,
-      "longitude": 63.653014,
-      "mission": "Demo Flight",
-      "missionDescription": "Demonstration Flight for Russia's new Soyuz-5 launch vehicle, with a mass simulator on board. Details TBD.",
-      "orbit": "Suborbital",
-      "status": "delayed",
-      "outcome": "delayed",
-      "statusName": "To Be Confirmed",
-      "statusAbbrev": "TBC",
-      "statusDescription": "Awaiting official confirmation - current date is known with some certainty.",
-      "sourceUrl": "https://ll.thespacedevs.com/2.2.0/launch/74b3aa8f-dc54-43dd-b8dd-1dc62ccccfc4/",
-      "apiUrl": "https://ll.thespacedevs.com/2.2.0/launch/74b3aa8f-dc54-43dd-b8dd-1dc62ccccfc4/",
-      "updatedAt": "2026-04-26T13:11:26Z",
-      "firstSeenAt": "2026-04-19T13:07:28Z",
-      "previousNets": [
-        "2026-04-30T00:00:00Z"
-      ],
-      "preflightCheckedAt": "2026-04-26T11:00:48Z",
-      "postflightCheckedAt": "2026-04-26T13:11:26Z",
-      "preflightStatus": "delayed",
-      "postflightStatus": "delayed"
     },
     {
       "id": "33eb7522-d371-4195-addb-c22aeff30c41",
